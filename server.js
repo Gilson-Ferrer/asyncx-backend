@@ -1,11 +1,9 @@
 require('dotenv').config();
 const fastify = require('fastify')({ logger: true });
-const cors = require('@fastify/cors');
-const axios = require('axios');
+const cors = require('@fastify/cors'); // Verifique se tem o @
 
-// Habilitar CORS para o seu domínio do GitHub/Custom
 fastify.register(cors, { 
-  origin: ["https://seu-usuario.github.io", "https://www.asyncx.com.br"] 
+  origin: "*" // Por enquanto deixe asterisco para testarmos, depois restringimos ao seu domínio
 });
 
 // ROTA 1: Verificação de Darkweb (Pwned API)
