@@ -2,19 +2,17 @@ require('dotenv').config();
 const fastify = require('fastify')({ logger: false });
 const cors = require('@fastify/cors');
 const oracledb = require('oracledb');
-const rateLimit = require('@fastify/rate-limit'); 
+const rateLimit = require('@fastify/rate-limit');
 
 oracledb.thin = true;
 
 fastify.register(rateLimit, {
   max: 1,
   timeWindow: '5 minutes',
-  errorResponseBuilder: (request, context) => {
-    return {
-      success: false,
-      message: '⚠️ Bloqueio de spam ativo. Aguarde 5 minutos para enviar uma nova mensagem.'
-    }
-  }
+  errorResponseBuilder: () => ({
+    success: false,
+    message: '⚠️ Sistema de segurança: Aguarde 5 minutos para atualizar sua mensagem.'
+  })
 });
 
 fastify.register(cors, { 
@@ -36,37 +34,31 @@ fastify.post('/api/contato', async (request, reply) => {
 
   try {
     connection = await getDbConnection();
-    const sql = `INSERT INTO LEADS_SITE (NOME, EMAIL, MENSAGEM) VALUES (:nome, :email, :mensagem)`;
+
+    const sql = `
+      MERGE INTO LEADS_SITE t
+      USING (SELECT :email AS email FROM dual) s
+      ON (t.EMAIL = s.email)
+      WHEN MATCHED THEN
+        UPDATE SET t.NOME = :nome, t.MENSAGEM = :mensagem, t.DATA_ENVIO = CURRENT_TIMESTAMP
+      WHEN NOT MATCHED THEN
+        INSERT (NOME, EMAIL, MENSAGEM, DATA_ENVIO)
+        VALUES (:nome, :email, :mensagem, CURRENT_TIMESTAMP)`;
     
     await connection.execute(sql, { nome, email, mensagem }, { autoCommit: true });
     
     return { 
       success: true, 
-      message: 'Protocolo ASYNCX registrado! Sua mensagem foi enviada com sucesso.' 
+      message: '✅ Protocolo ASYNCX processado! Seus dados foram registrados/atualizados com sucesso.' 
     };
 
   } catch (err) {
-    return reply.status(500).send({ 
-      success: false, 
-      message: "Erro ao processar solicitação.",
-      oraCode: err.code 
-    });
+    return reply.status(500).send({ success: false, message: "Erro no Oracle Cloud", oraCode: err.code });
   } finally {
-    if (connection) {
-      try { await connection.close(); } catch (e) { /* silent close */ }
-    }
+    if (connection) await connection.close();
   }
 });
 
-fastify.get('/', async () => {
-  return { status: 'online', service: 'ASYNCX-API', mode: 'TLS-Direct' };
-});
+fastify.get('/', async () => ({ status: 'online', service: 'ASYNCX-API' }));
 
-const start = async () => {
-  try {
-    await fastify.listen({ port: process.env.PORT || 10000, host: '0.0.0.0' });
-  } catch (err) {
-    process.exit(1);
-  }
-};
-start();
+fastify.listen({ port: process.env.PORT || 10000, host: '0.0.0.0' });
