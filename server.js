@@ -28,6 +28,44 @@ async function getDbConnection() {
   });
 }
 
+// ROTA DE LOGIN (NOVA)
+fastify.post('/api/login', async (request, reply) => {
+  const { email, senha } = request.body;
+  let connection;
+
+  try {
+    connection = await getDbConnection();
+    // Buscamos os campos necessários para o Painel de Saúde
+    const result = await connection.execute(
+      `SELECT NOME, TIPO_SERVICO, MONITORAMENTO_STATUS, LINK_LAUDO, LINK_BOLETO 
+       FROM LEADS_SITE 
+       WHERE EMAIL = :email AND SENHA = :senha`,
+      { email, senha }
+    );
+
+    if (result.rows.length === 0) {
+      return reply.status(401).send({ success: false, message: "E-mail ou senha incorretos." });
+    }
+
+    const user = result.rows[0];
+    return {
+      success: true,
+      data: {
+        nome: user[0],
+        servico: user[1],
+        status: user[2],
+        linkLaudo: user[3],
+        linkBoleto: user[4]
+      }
+    };
+  } catch (err) {
+    return reply.status(500).send({ success: false, message: "Erro na autenticação" });
+  } finally {
+    if (connection) await connection.close();
+  }
+});
+
+// ROTA DE CONTATO (MANTIDA)
 fastify.post('/api/contato', async (request, reply) => {
   const { nome, email, mensagem } = request.body;
   let connection;
@@ -61,7 +99,6 @@ fastify.post('/api/contato', async (request, reply) => {
         })
       }).catch(e => console.error("Falha no Telegram:", e.message));
     }
-
     
     return { 
       success: true, 
