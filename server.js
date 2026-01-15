@@ -23,6 +23,7 @@ async function getDbConnection() {
     user: process.env.DB_USER,
     password: process.env.DB_PASS,
     connectionString: process.env.DB_CONNECTION_STRING,
+    configDir: '/etc/secrets', 
     walletLocation: '/etc/secrets',
     walletPassword: process.env.WALLET_PASS
   });
