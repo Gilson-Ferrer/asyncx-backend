@@ -46,6 +46,22 @@ fastify.post('/api/contato', async (request, reply) => {
         VALUES (:nome, :email, :mensagem, CURRENT_TIMESTAMP)`;
     
     await connection.execute(sql, { nome, email, mensagem }, { autoCommit: true });
+
+    // --- LÓGICA DO TELEGRAM ---
+    if (process.env.TELEGRAM_TOKEN && process.env.TELEGRAM_CHAT_ID) {
+      const telegramUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendMessage`;
+      const text = `🚀 *NOVO LEAD ASYNCX*\n\n*Nome:* ${nome}\n*E-mail:* ${email}\n*Mensagem:* ${mensagem}`;
+      
+      fetch(telegramUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: process.env.TELEGRAM_CHAT_ID,
+          text: text,
+          parse_mode: 'Markdown'
+        })
+      }).catch(e => console.error("Erro Telegram:", e.message));
+    }
     
     return { 
       success: true, 
