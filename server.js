@@ -14,18 +14,16 @@ fastify.register(cors, {
 // Conexão Simplificada via TLS (Sem Wallet) com Debug
 async function getDbConnection() {
   try {
-    console.log("LOG ASYNCX: Iniciando tentativa de conexão TLS...");
-    console.log("USER:", process.env.DB_USER);
-    // Verificando se a string longa chegou (apenas os primeiros 50 caracteres por segurança)
-    console.log("STRING PREFIX:", process.env.DB_CONNECTION_STRING?.substring(0, 50));
-
+    console.log("LOG ASYNCX: Conectando via TLS Direto (Sem busca de arquivos)...");
+    
     return await oracledb.getConnection({
       user: process.env.DB_USER,
       password: process.env.DB_PASS,
-      connectionString: process.env.DB_CONNECTION_STRING
+      // Passamos a string diretamente. 
+      // O segredo é garantir que não haja espaços extras no início ou fim.
+      connectionString: process.env.DB_CONNECTION_STRING.trim()
     });
   } catch (err) {
-    // ESSA LINHA VAI MATAR A CHARADA NO LOG DO RENDER
     console.error("FATAL DATABASE ERROR:", err);
     throw err;
   }
