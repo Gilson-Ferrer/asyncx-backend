@@ -13,14 +13,21 @@ fastify.register(cors, {
 
 // Conexão Simplificada via TLS (Sem Wallet) com Debug
 async function getDbConnection() {
-  return await oracledb.getConnection({
-    user: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    connectionString: process.env.DB_CONNECTION_STRING.trim()
-  });
+  try {
+    console.log("LOG ASYNCX: Tentando conectar via TLS...");
+    return await oracledb.getConnection({
+      user: process.env.DB_USER,
+      password: process.env.DB_PASS,
+      connectionString: process.env.DB_CONNECTION_STRING.trim()
+    });
+  } catch (err) {
+    // Imprime o erro técnico detalhado no console do Render
+    console.error("ERRO CRÍTICO NA CONEXÃO ORACLE:", err);
+    throw err; // Repassa o erro para a rota tratar
+  }
 }
 
-// ROTA: Salvar Lead
+// ROTA ATUALIZADA COM TRATAMENTO DE ERRO EXPOSTO
 fastify.post('/api/contato', async (request, reply) => {
   const { nome, email, mensagem } = request.body;
   let connection;
@@ -28,29 +35,21 @@ fastify.post('/api/contato', async (request, reply) => {
   try {
     connection = await getDbConnection();
     const sql = `INSERT INTO LEADS_SITE (NOME, EMAIL, MENSAGEM) VALUES (:nome, :email, :mensagem)`;
-    
-    // Usando bind por objeto para garantir compatibilidade
     await connection.execute(sql, { nome, email, mensagem }, { autoCommit: true });
     
-    fastify.log.info(`✅ Lead salvo via TLS: ${email}`);
-    return { success: true, message: 'Protocolo ASYNCX registrado com sucesso.' };
+    return { success: true, message: 'Solicitação registrada com sucesso.' };
 
   } catch (err) {
-    fastify.log.error("❌ Erro no Banco:", err.message);
+    // IMPORTANTE: Agora o erro vai aparecer no seu 'alert' do navegador
     return reply.status(500).send({ 
       success: false, 
-      message: "Falha na comunicação com o Oracle Cloud",
-      details: err.message,
-      code: err.code 
+      message: "Erro no Banco de Dados",
+      oraCode: err.code,      // Ex: ORA-12170
+      details: err.message    // Mensagem completa do erro
     });
   } finally {
     if (connection) {
-      try { 
-        await connection.close(); 
-        console.log("LOG ASYNCX: Conexão fechada.");
-      } catch (e) { 
-        console.error("Erro ao fechar:", e); 
-      }
+      try { await connection.close(); } catch (e) { console.error("Erro ao fechar:", e); }
     }
   }
 });
