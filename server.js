@@ -2,8 +2,20 @@ require('dotenv').config();
 const fastify = require('fastify')({ logger: false });
 const cors = require('@fastify/cors');
 const oracledb = require('oracledb');
+const rateLimit = require('@fastify/rate-limit'); 
 
 oracledb.thin = true;
+
+fastify.register(rateLimit, {
+  max: 1,
+  timeWindow: '5 minutes',
+  errorResponseBuilder: (request, context) => {
+    return {
+      success: false,
+      message: '⚠️ Bloqueio de spam ativo. Aguarde 5 minutos para enviar uma nova mensagem.'
+    }
+  }
+});
 
 fastify.register(cors, { 
   origin: ["https://gilson-ferrer.github.io", "https://www.asyncx.com.br", "https://asyncx.com.br"],
