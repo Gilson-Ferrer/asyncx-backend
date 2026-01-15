@@ -11,7 +11,7 @@ fastify.register(rateLimit, {
   timeWindow: '5 minutes',
   errorResponseBuilder: () => ({
     success: false,
-    message: '⚠️ Sistema de segurança: Aguarde 5 minutos para atualizar sua mensagem.'
+    message: '⚠️ Limite de segurança: Você só pode atualizar sua mensagem a cada 5 minutos.'
   })
 });
 
@@ -49,7 +49,7 @@ fastify.post('/api/contato', async (request, reply) => {
     
     return { 
       success: true, 
-      message: '✅ Protocolo ASYNCX processado! Seus dados foram registrados/atualizados com sucesso.' 
+      message: 'Protocolo ASYNCX processado! Seus dados foram salvos ou atualizados com sucesso.' 
     };
 
   } catch (err) {
@@ -61,4 +61,11 @@ fastify.post('/api/contato', async (request, reply) => {
 
 fastify.get('/', async () => ({ status: 'online', service: 'ASYNCX-API' }));
 
-fastify.listen({ port: process.env.PORT || 10000, host: '0.0.0.0' });
+const start = async () => {
+  try {
+    await fastify.listen({ port: process.env.PORT || 10000, host: '0.0.0.0' });
+  } catch (err) {
+    process.exit(1);
+  }
+};
+start();
