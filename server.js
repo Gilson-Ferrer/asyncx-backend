@@ -19,14 +19,22 @@ fastify.register(cors, {
  * FUNÇÃO DE CONEXÃO COM ORACLE CLOUD
  */
 async function getDbConnection() {
-  return await oracledb.getConnection({
-    user: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    connectionString: process.env.DB_CONNECTION_STRING, // Use 'asyncxdb_tp' do seu tnsnames
-    // Configurações cruciais para mTLS no Modo Thin
-    walletLocation: '/etc/secrets', 
-    walletPassword: process.env.WALLET_PASS 
-  });
+  try {
+    console.log("Tentando conectar ao alias:", process.env.DB_CONNECTION_STRING);
+    
+    return await oracledb.getConnection({
+      user: process.env.DB_USER,
+      password: process.env.DB_PASS,
+      connectionString: process.env.DB_CONNECTION_STRING,
+      // No Render, passamos o caminho absoluto da pasta montada
+      walletLocation: '/etc/secrets', 
+      walletPassword: process.env.WALLET_PASS 
+    });
+  } catch (err) {
+    // ESTA LINHA É CRUCIAL: Ela vai mostrar o erro ORA- no log do Render
+    console.error("ERRO DETALHADO DO ORACLE:", err); 
+    throw err;
+  }
 }
 
 /**
