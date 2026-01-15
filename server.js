@@ -13,20 +13,11 @@ fastify.register(cors, {
 
 // Conexão Simplificada via TLS (Sem Wallet) com Debug
 async function getDbConnection() {
-  try {
-    console.log("LOG ASYNCX: Conectando via TLS Direto (Sem busca de arquivos)...");
-    
-    return await oracledb.getConnection({
-      user: process.env.DB_USER,
-      password: process.env.DB_PASS,
-      // Passamos a string diretamente. 
-      // O segredo é garantir que não haja espaços extras no início ou fim.
-      connectionString: process.env.DB_CONNECTION_STRING.trim()
-    });
-  } catch (err) {
-    console.error("FATAL DATABASE ERROR:", err);
-    throw err;
-  }
+  return await oracledb.getConnection({
+    user: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    connectionString: process.env.DB_CONNECTION_STRING.trim()
+  });
 }
 
 // ROTA: Salvar Lead
