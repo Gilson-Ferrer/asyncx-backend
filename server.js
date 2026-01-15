@@ -1,5 +1,5 @@
 require('dotenv').config();
-const fastify = require('fastify')({ logger: false });
+const fastify = require('fastify')({ logger: false, trustProxy: true });
 const cors = require('@fastify/cors');
 const oracledb = require('oracledb');
 const rateLimit = require('@fastify/rate-limit');
@@ -11,7 +11,7 @@ fastify.register(rateLimit, {
   timeWindow: '5 minutes',
   errorResponseBuilder: () => ({
     success: false,
-    message: '⚠️ Limite de segurança: Você só pode atualizar sua mensagem a cada 5 minutos.'
+    message: 'Aguarde 5 minutos antes de enviar uma nova mensagem.'
   })
 });
 
