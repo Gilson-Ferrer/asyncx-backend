@@ -22,10 +22,8 @@ async function getDbConnection() {
   return await oracledb.getConnection({
     user: process.env.DB_USER,
     password: process.env.DB_PASS,
-    connectionString: process.env.DB_CONNECTION_STRING,
-    configDir: '/etc/secrets', 
-    walletLocation: '/etc/secrets',
-    walletPassword: process.env.WALLET_PASS
+    // Copie a string completa do "TLS Connection String" da aba TLS do seu painel Oracle
+    connectionString: process.env.DB_CONNECTION_STRING 
   });
 }
 
