@@ -5,6 +5,8 @@ const oracledb = require('oracledb');
 const rateLimit = require('@fastify/rate-limit');
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
+const bcrypt = require('bcrypt');
+const saltRounds = 10;
 
 oracledb.thin = true;
 oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT; 
@@ -64,33 +66,54 @@ fastify.get('/api/auth/setup-check/:token', async (request, reply) => {
 });
 
 // ==========================================
-// ROTA 2: FINALIZAR CADASTRO (SALVAR SENHA)
+// ROTA 2: FINALIZAR CADASTRO (SALVAR SENHA COM HASH)
 // ==========================================
 fastify.post('/api/auth/setup-finalize', async (request, reply) => {
     const { token, senha, mfaToken } = request.body;
     let connection;
     try {
         connection = await getDbConnection();
+        
+        // 1. Localiza o usuário pelo token de ativação
         const userRes = await connection.execute(
             `SELECT USER_ID, MFA_SECRET FROM ASYNCX_USERS WHERE RESET_TOKEN = :token`, 
             { token }
         );
-        if (userRes.rows.length === 0) throw new Error("Usuário não encontrado.");
+        
+        if (userRes.rows.length === 0) throw new Error("Link de ativação inválido ou expirado.");
         const user = userRes.rows[0];
+
+        // 2. Valida o MFA (Double Check de Segurança)
         const verified = speakeasy.totp.verify({
             secret: user.MFA_SECRET,
             encoding: 'base32',
             token: mfaToken
         });
+        
         if (!verified) return reply.status(400).send({ success: false, message: "Código do Authenticator inválido." });
 
+        // 3. GERAR O HASH DA SENHA (Defesa contra vazamento de banco)
+        // O bcrypt gera o SALT automaticamente e inclui no hash final
+        const senhaHasheada = await bcrypt.hash(senha, saltRounds);
+
+        // 4. Salva o Hash e finaliza o setup
         await connection.execute(
-            `UPDATE ASYNCX_USERS SET SENHA_HASH = :senha, MFA_SETUP_COMPLETE = 1, RESET_TOKEN = NULL, STATUS_MONITORAMENTO = 'ATIVO' WHERE USER_ID = :id`,
-            { senha, id: user.USER_ID },
+            `UPDATE ASYNCX_USERS 
+             SET SENHA_HASH = :senha, 
+                 MFA_SETUP_COMPLETE = 1, 
+                 RESET_TOKEN = NULL, 
+                 STATUS_MONITORAMENTO = 'ATIVO' 
+             WHERE USER_ID = :id`,
+            { 
+                senha: senhaHasheada, // Gravando o hash, não a senha limpa
+                id: user.USER_ID 
+            },
             { autoCommit: true }
         );
-        return { success: true, message: "Conta ativada com sucesso!" };
+
+        return { success: true, message: "Segurança ASYNCX ativada com sucesso!" };
     } catch (err) {
+        console.error("Erro Setup Finalize:", err.message);
         return reply.status(500).send({ success: false, message: err.message });
     } finally {
         if (connection) await connection.close();
@@ -98,7 +121,7 @@ fastify.post('/api/auth/setup-finalize', async (request, reply) => {
 });
 
 // ==========================================
-// ROTA 3: LOGIN DEFINITIVO (COM MFA)
+// ROTA 3: LOGIN DEFINITIVO (COM MFA E BCRYPT)
 // ==========================================
 fastify.post('/api/login', async (request, reply) => {
     const { email, senha, mfaToken } = request.body;
@@ -110,20 +133,32 @@ fastify.post('/api/login', async (request, reply) => {
                      WHERE EMAIL_LOGIN = :email`;
         const result = await connection.execute(sql, { email });
 
-        if (result.rows.length === 0) return reply.status(401).send({ success: false, message: "Credenciais inválidas." });
+        // 1. Verifica se o usuário existe
+        if (result.rows.length === 0) {
+            return reply.status(401).send({ success: false, message: "Credenciais inválidas." });
+        }
         
         const user = result.rows[0];
-        if (senha !== user.SENHA_HASH) return reply.status(401).send({ success: false, message: "Credenciais inválidas." });
 
+        // 2. COMPARAÇÃO SEGURA: Texto plano vs Hash do Banco
+        const senhaValida = await bcrypt.compare(senha, user.SENHA_HASH);
+        if (!senhaValida) {
+            return reply.status(401).send({ success: false, message: "Credenciais inválidas." });
+        }
+
+        // 3. Validação do MFA (Time-based One-Time Password)
         const verified = speakeasy.totp.verify({
             secret: user.MFA_SECRET,
             encoding: 'base32',
             token: mfaToken,
-            window: 1 
+            window: 1 // Janela de tolerância para drift de tempo
         });
 
-        if (!verified) return reply.status(401).send({ success: false, message: "Código MFA inválido." });
+        if (!verified) {
+            return reply.status(401).send({ success: false, message: "Código MFA inválido." });
+        }
 
+        // 4. Retorno de Sucesso
         return {
             success: true,
             data: {
@@ -134,6 +169,7 @@ fastify.post('/api/login', async (request, reply) => {
             }
         };
     } catch (err) {
+        console.error("Erro no Login:", err);
         return reply.status(500).send({ success: false, message: "Erro na autenticação" });
     } finally {
         if (connection) await connection.close();
@@ -216,19 +252,39 @@ fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
     }
 });
 
-// NOVA ROTA: ALTERAR SENHA
+// ==========================================
+// NOVA ROTA: ALTERAR SENHA (COM HASHING)
+// ==========================================
 fastify.post('/api/user/change-password', async (request, reply) => {
     const { email, novaSenha } = request.body;
     let connection;
     try {
         connection = await getDbConnection();
-        await connection.execute(
-            `UPDATE ASYNCX_USERS SET SENHA_HASH = :novaSenha WHERE EMAIL_LOGIN = :email`,
-            { novaSenha, email }, { autoCommit: true }
+
+        // 1. GERAR O HASH da nova senha
+        // O saltRounds deve ser o mesmo usado nas outras rotas (10)
+        const novaSenhaHasheada = await bcrypt.hash(novaSenha, 10);
+
+        // 2. EXECUTAR O UPDATE com o hash
+        const sql = `UPDATE ASYNCX_USERS 
+                     SET SENHA_HASH = :senha 
+                     WHERE EMAIL_LOGIN = :email`;
+
+        const result = await connection.execute(
+            sql,
+            { senha: novaSenhaHasheada, email },
+            { autoCommit: true }
         );
-        return { success: true, message: "Senha alterada com sucesso!" };
+
+        // Verifica se o e-mail realmente existia e foi atualizado
+        if (result.rowsAffected === 0) {
+            return reply.status(404).send({ success: false, message: "Usuário não encontrado." });
+        }
+
+        return { success: true, message: "Senha alterada com sucesso e protegida!" };
     } catch (err) {
-        return reply.status(500).send({ success: false, message: "Erro ao trocar senha" });
+        console.error("Erro ao trocar senha:", err.message);
+        return reply.status(500).send({ success: false, message: "Erro interno ao processar alteração." });
     } finally {
         if (connection) await connection.close();
     }
