@@ -16,6 +16,8 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "fastify": "^5.6.2",
-    "oracledb": "^6.10.0"
+    "oracledb": "^6.10.0",
+    "qrcode": "^1.5.4",
+    "speakeasy": "^2.0.0"
   }
 }
