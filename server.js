@@ -177,7 +177,7 @@ const start = async () => {
   }
 };
 
-// ROTA 6: BUSCAR DADOS COMPLETOS DO USUÁRIO LOGADO (SINCRONIZADA)
+// ROTA 6: BUSCAR DADOS COMPLETOS DO USUÁRIO LOGADO (VERSÃO FINAL SINCRONIZADA)
 fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
     const { email } = request.params;
     let connection;
@@ -185,17 +185,12 @@ fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
     try {
         connection = await getDbConnection();
 
-        // 1. Busca Perfil (Tabela ASYNCX_USERS)
-        // Certifique-se que as colunas NOME_EXIBICAO, STATUS_MONITORAMENTO existem
+        // 1. Busca Perfil
         const userSql = `SELECT USER_ID, NOME_EXIBICAO, STATUS_MONITORAMENTO, QTD_DISPOSITIVOS 
                          FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`;
         const userRes = await connection.execute(userSql, { email });
 
-        if (userRes.rows.length === 0) {
-            return reply.status(404).send({ success: false, message: "Usuário não encontrado" });
-        }
-        
-        // O Oracle retorna um array de objetos. Pegamos o primeiro.
+        if (userRes.rows.length === 0) return reply.status(404).send({ success: false, message: "Usuário não encontrado" });
         const user = userRes.rows[0];
 
         // 2. Busca Documentos (Sincronizado com NOME_EXIBICAO e URL_PDF)
@@ -203,8 +198,8 @@ fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
                          FROM ASYNCX_DOCUMENTS WHERE USER_ID = :id ORDER BY DATA_UPLOAD DESC`;
         const docsRes = await connection.execute(docsSql, { id: user.USER_ID });
 
-        // 3. Busca Financeiro (Sincronizado com LINK_BOLETO e STATUS_PAGO)
-        const billsSql = `SELECT DESCRICAO, VALOR, STATUS_PAGO, LINK_BOLETO 
+        // 3. Busca Financeiro (Trocado DESCRICAO por ASAAS_PAYMENT_ID conforme seu DESC)
+        const billsSql = `SELECT ASAAS_PAYMENT_ID, VALOR, STATUS_PAGO, LINK_BOLETO 
                           FROM ASYNCX_BILLING WHERE USER_ID = :id ORDER BY DATA_VENCIMENTO DESC`;
         const billsRes = await connection.execute(billsSql, { id: user.USER_ID });
 
@@ -216,13 +211,8 @@ fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
         };
 
     } catch (err) {
-        // ESSA LINHA É VITAL: Olhe os logs do Render para ver o erro real aqui!
-        console.error("ERRO CRÍTICO NO DASHBOARD:", err);
-        return reply.status(500).send({ 
-            success: false, 
-            message: "Erro ao buscar dados do banco.",
-            details: err.message 
-        });
+        console.error("ERRO NO BANCO:", err.message);
+        return reply.status(500).send({ success: false, message: "Erro ao buscar dados do banco.", details: err.message });
     } finally {
         if (connection) await connection.close();
     }
