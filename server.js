@@ -176,4 +176,45 @@ const start = async () => {
     process.exit(1);
   }
 };
+
+// ROTA 6: BUSCAR DADOS COMPLETOS DO USUÁRIO LOGADO
+fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
+    const { email } = request.params;
+    let connection;
+
+    try {
+        connection = await getDbConnection();
+
+        // 1. Busca Dados do Usuário
+        const userSql = `SELECT USER_ID, NOME_EXIBICAO, STATUS_MONITORAMENTO, QTD_DISPOSITIVOS 
+                         FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`;
+        const userRes = await connection.execute(userSql, { email });
+
+        if (userRes.rows.length === 0) return reply.status(404).send({ message: "Usuário não encontrado" });
+        const user = userRes.rows[0];
+
+        // 2. Busca Documentos
+        const docsSql = `SELECT NOME_DOC, URL_DOC, DATA_UPLOAD 
+                         FROM ASYNCX_DOCUMENTS WHERE USER_ID = :id ORDER BY DATA_UPLOAD DESC`;
+        const docsRes = await connection.execute(docsSql, { id: user.USER_ID });
+
+        // 3. Busca Financeiro
+        const billsSql = `SELECT DESCRICAO, VALOR, STATUS_PAGAMENTO, URL_BOLETO 
+                          FROM ASYNCX_BILLING WHERE USER_ID = :id ORDER BY DATA_VENCIMENTO DESC`;
+        const billsRes = await connection.execute(billsSql, { id: user.USER_ID });
+
+        return {
+            success: true,
+            perfil: user,
+            documentos: docsRes.rows,
+            financeiro: billsRes.rows
+        };
+
+    } catch (err) {
+        return reply.status(500).send({ success: false, message: err.message });
+    } finally {
+        if (connection) await connection.close();
+    }
+});
+
 start();
