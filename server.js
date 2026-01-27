@@ -65,51 +65,56 @@ fastify.post('/api/login', async (request, reply) => {
   }
 });
 
-// ROTA DE CONTATO (MANTIDA)
-fastify.post('/api/contato', async (request, reply) => {
-  const { nome, email, mensagem } = request.body;
-  let connection;
+// ROTA DE CONTATO ATUALIZADA: FOCO EXCLUSIVO NO TELEGRAM
+fastify.post('/api/telegram-notify', async (request, reply) => {
+    const { nome, email, mensagem } = request.body;
 
-  try {
-    connection = await getDbConnection();
+    // 1. Verificação de Variáveis de Ambiente
+    const token = process.env.TELEGRAM_TOKEN;
+    const chatId = process.env.TELEGRAM_CHAT_ID;
 
-    const sql = `
-      MERGE INTO LEADS_SITE t
-      USING (SELECT :email AS email FROM dual) s
-      ON (t.EMAIL = s.email)
-      WHEN MATCHED THEN
-        UPDATE SET t.NOME = :nome, t.MENSAGEM = :mensagem, t.DATA_ENVIO = CURRENT_TIMESTAMP
-      WHEN NOT MATCHED THEN
-        INSERT (NOME, EMAIL, MENSAGEM, DATA_ENVIO)
-        VALUES (:nome, :email, :mensagem, CURRENT_TIMESTAMP)`;
-    
-    await connection.execute(sql, { nome, email, mensagem }, { autoCommit: true });
-
-    if (process.env.TELEGRAM_TOKEN && process.env.TELEGRAM_CHAT_ID) {
-      const telegramUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendMessage`;
-      const textoTelegram = `🚀 *NOVO LEAD ASYNCX*\n\n*Nome:* ${nome}\n*E-mail:* ${email}\n*Mensagem:* ${mensagem}`;
-      
-      fetch(telegramUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: process.env.TELEGRAM_CHAT_ID,
-          text: textoTelegram,
-          parse_mode: 'Markdown'
-        })
-      }).catch(e => console.error("Falha no Telegram:", e.message));
+    if (!token || !chatId) {
+        console.error("ERRO: Credenciais do Telegram não configuradas no Render.");
+        return reply.status(500).send({ success: false, message: "Erro de configuração no servidor." });
     }
-    
-    return { 
-      success: true, 
-      message: 'Protocolo ASYNCX processado! Seus dados foram salvos ou atualizados com sucesso.' 
-    };
 
-  } catch (err) {
-    return reply.status(500).send({ success: false, message: "Erro no Oracle Cloud", oraCode: err.code });
-  } finally {
-    if (connection) await connection.close();
-  }
+    try {
+        // 2. Preparação da Mensagem
+        const telegramUrl = `https://api.telegram.org/bot${token}/sendMessage`;
+        const textoTelegram = `🚀 *NOVO CONTATO ASYNCX*\n\n` +
+                              `*Nome:* ${nome}\n` +
+                              `*E-mail:* ${email}\n` +
+                              `*Mensagem:* ${mensagem}\n\n` +
+                              `_Enviado via Website_`;
+
+        // 3. Disparo Assíncrono para o Telegram
+        const response = await fetch(telegramUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: chatId,
+                text: textoTelegram,
+                parse_mode: 'Markdown'
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Telegram API Error: ${response.status}`);
+        }
+
+        // 4. Resposta para o Frontend (Sem tocar no Banco por enquanto)
+        return { 
+            success: true, 
+            message: 'Protocolo ASYNCX enviado com sucesso para a central!' 
+        };
+
+    } catch (err) {
+        console.error("Falha no processo de notificação:", err.message);
+        return reply.status(500).send({ 
+            success: false, 
+            message: "Falha ao processar mensagem. Tente o WhatsApp." 
+        });
+    }
 });
 
 fastify.get('/', async () => ({ status: 'online', service: 'ASYNCX-API' }));
