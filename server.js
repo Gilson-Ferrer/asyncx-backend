@@ -177,7 +177,7 @@ const start = async () => {
   }
 };
 
-// ROTA 6: BUSCAR DADOS COMPLETOS DO USUÁRIO LOGADO
+// ROTA 6: BUSCAR DADOS COMPLETOS DO USUÁRIO LOGADO (SINCRONIZADA)
 fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
     const { email } = request.params;
     let connection;
@@ -185,7 +185,7 @@ fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
     try {
         connection = await getDbConnection();
 
-        // 1. Busca Dados do Usuário
+        // 1. Busca Perfil (Tabela ASYNCX_USERS)
         const userSql = `SELECT USER_ID, NOME_EXIBICAO, STATUS_MONITORAMENTO, QTD_DISPOSITIVOS 
                          FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`;
         const userRes = await connection.execute(userSql, { email });
@@ -193,13 +193,13 @@ fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
         if (userRes.rows.length === 0) return reply.status(404).send({ message: "Usuário não encontrado" });
         const user = userRes.rows[0];
 
-        // 2. Busca Documentos
-        const docsSql = `SELECT NOME_DOC, URL_DOC, DATA_UPLOAD 
+        // 2. Busca Documentos (Atenção aos nomes: NOME_EXIBICAO e URL_PDF)
+        const docsSql = `SELECT NOME_EXIBICAO, URL_PDF, DATA_UPLOAD 
                          FROM ASYNCX_DOCUMENTS WHERE USER_ID = :id ORDER BY DATA_UPLOAD DESC`;
         const docsRes = await connection.execute(docsSql, { id: user.USER_ID });
 
-        // 3. Busca Financeiro
-        const billsSql = `SELECT DESCRICAO, VALOR, STATUS_PAGAMENTO, URL_BOLETO 
+        // 3. Busca Financeiro (Atenção aos nomes: LINK_BOLETO e STATUS_PAGO)
+        const billsSql = `SELECT DESCRICAO, VALOR, STATUS_PAGO, LINK_BOLETO 
                           FROM ASYNCX_BILLING WHERE USER_ID = :id ORDER BY DATA_VENCIMENTO DESC`;
         const billsRes = await connection.execute(billsSql, { id: user.USER_ID });
 
@@ -211,7 +211,8 @@ fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
         };
 
     } catch (err) {
-        return reply.status(500).send({ success: false, message: err.message });
+        console.error("Erro no fetch do dashboard:", err.message);
+        return reply.status(500).send({ success: false, message: "Erro ao buscar dados do banco." });
     } finally {
         if (connection) await connection.close();
     }
