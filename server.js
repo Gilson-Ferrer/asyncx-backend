@@ -14,12 +14,16 @@ const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
     host: "smtppro.zoho.com",
-    port: 465,
-    secure: true, 
+    port: 587, // Mudança para porta de submissão
+    secure: false, // false para 587, true para 465
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
-    }
+    },
+    tls: {
+        rejectUnauthorized: false // Evita falhas de handshake em conexões transatlânticas
+    },
+    connectionTimeout: 10000 // Aumentamos para 10s para dar tempo da rota transatlântica
 });
 
 // TEMPLATE MINIMALISTA (BRANCO E AZUL)
