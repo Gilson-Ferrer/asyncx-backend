@@ -294,52 +294,49 @@ fastify.get('/api/user/dashboard-data', { preHandler: [validarToken] }, async (r
 // ==========================================
 
 fastify.post('/api/user/change-password', { preHandler: [validarToken] }, async (request, reply) => {
-
+    // Agora esperamos também o mfaToken do frontend
     const email = request.user.email; 
-    const { novaSenha } = request.body;
+    const { novaSenha, mfaToken } = request.body; 
     
     let connection;
     try {
-        // 1. Validação básica (caso o frontend falhe)
-        if (!novaSenha || novaSenha.length < 8) {
-            return reply.status(400).send({ 
-                success: false, 
-                message: "A senha não cumpre os requisitos mínimos de segurança." 
-            });
+        if (!novaSenha || novaSenha.length < 8 || !mfaToken) {
+            return reply.status(400).send({ success: false, message: "Dados incompletos ou senha fraca." });
         }
 
         connection = await getDbConnection();
 
-        // 2. GERAR O HASH da nova senha (Bcrypt com 10 rounds)
+        // 1. BUSCAR O MFA_SECRET para validar o segundo fator
+        const userRes = await connection.execute(
+            `SELECT MFA_SECRET FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`,
+            { email }
+        );
+        const user = userRes.rows[0];
+
+        // 2. VALIDAR MFA antes de qualquer alteração
+        const verified = speakeasy.totp.verify({
+            secret: user.MFA_SECRET,
+            encoding: 'base32',
+            token: mfaToken
+        });
+
+        if (!verified) {
+            return reply.status(401).send({ success: false, message: "Código MFA inválido. Operação bloqueada." });
+        }
+
+        // 3. SE OK, GERA O HASH E ATUALIZA
         const novaSenhaHasheada = await bcrypt.hash(novaSenha, 10);
-
-        // 3. EXECUTAR O UPDATE com o hash
-        const sql = `UPDATE ASYNCX_USERS 
-                     SET SENHA_HASH = :senha 
-                     WHERE EMAIL_LOGIN = :email`;
-
         const result = await connection.execute(
-            sql,
+            `UPDATE ASYNCX_USERS SET SENHA_HASH = :senha WHERE EMAIL_LOGIN = :email`,
             { senha: novaSenhaHasheada, email },
             { autoCommit: true }
         );
 
-        // Como o e-mail vem do token, se chegar aqui e não afetar linhas, algo está errado no banco
-        if (result.rowsAffected === 0) {
-            return reply.status(404).send({ success: false, message: "Usuário não localizado no sistema." });
-        }
-
-        return { 
-            success: true, 
-            message: "Sua senha foi atualizada e criptografada com sucesso!" 
-        };
+        return { success: true, message: "Senha alterada com sucesso!" };
 
     } catch (err) {
-        console.error("Erro Crítico ao trocar senha:", err.message);
-        return reply.status(500).send({ 
-            success: false, 
-            message: "Falha interna ao processar a alteração de segurança." 
-        });
+        console.error("Erro Crítico:", err.message);
+        return reply.status(500).send({ success: false, message: "Erro ao processar alteração." });
     } finally {
         if (connection) await connection.close();
     }
