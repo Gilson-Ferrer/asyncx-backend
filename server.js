@@ -402,12 +402,18 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
         const resetLink = `https://asyncx.com.br/restrito.html?setup=${token}`;
         
         await resend.emails.send({
-            from: 'Segurança ASYNCX <onboarding@resend.dev>', // Use este para testar agora
+            from: 'Segurança ASYNCX <contato@asyncx.com.br>', // REMETENTE OFICIAL
             to: email,
-            subject: '🔒 PROTOCOLO DE RECUPERAÇÃO - ASYNCX',
-            html: templateEmail(user.NOME_EXIBICAO, resetLink, "SECURITY PROTOCOL", "Recuperação de acesso solicitada.", "REDEFINIR AGORA")
+            subject: 'PROTOCOLO DE RECUPERAÇÃO - ASYNCX',
+            html: templateEmail(
+                user.NOME_EXIBICAO, 
+                resetLink, 
+                "SECURITY PROTOCOL", 
+                "Uma solicitação de redefinição de acesso foi detectada. Se não foi você, ignore este alerta.", 
+                "REDEFINIR ACESSO"
+            )
         });
-
+        
         console.log(`[RESEND OK] E-mail enviado para: ${email}`);
 
     } catch (err) {
