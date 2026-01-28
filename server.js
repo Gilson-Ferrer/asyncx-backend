@@ -13,7 +13,7 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-    host: "smtppro.zoho.com",
+    host: "smtp.gmail.com",
     port: 465,
     secure: true, 
     auth: {
