@@ -12,8 +12,11 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const crypto = require('crypto');
 
 const { Resend } = require('resend');
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
+if (!resend) {
+    console.warn("[AVISO] RESEND_API_KEY não configurada. O envio de e-mail não funcionará.");
+}
 // TEMPLATE MINIMALISTA (BRANCO E AZUL)
 const templateEmail = (nome, link, titulo, corpo, textoBotao) => `
     <div style="background-color: #ffffff; color: #1e293b; padding: 40px; font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; border: 1px solid #e2e8f0; border-radius: 32px; max-width: 500px; margin: auto;">
