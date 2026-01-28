@@ -84,106 +84,79 @@ fastify.get('/api/auth/setup-check/:token', async (request, reply) => {
     let connection;
     try {
         connection = await getDbConnection();
-        
-        // 1. Removemos a verificação de data da Query SQL
-        const sql = `SELECT USER_ID, EMAIL_LOGIN, MFA_SECRET, NOME_EXIBICAO, RESET_EXPIRATION 
-                     FROM ASYNCX_USERS 
-                     WHERE RESET_TOKEN = :token 
-                     AND MFA_SETUP_COMPLETE = 0`;
-                     
+        const sql = `SELECT USER_ID, EMAIL_LOGIN, MFA_SECRET, NOME_EXIBICAO, RESET_EXPIRATION, MFA_SETUP_COMPLETE 
+                     FROM ASYNCX_USERS WHERE RESET_TOKEN = :token`;
         const result = await connection.execute(sql, { token });
 
-        if (result.rows.length === 0) {
-            return reply.status(400).send({ success: false, message: "Link inválido." });
-        }
+        if (result.rows.length === 0) return reply.status(400).send({ success: false, message: "Link inválido ou já utilizado." });
 
         const user = result.rows[0];
-
-        // 2. Validação de Data no Node.js (A prova de falhas de fuso horário)
-        const dbExpiration = new Date(user.RESET_EXPIRATION);
         const agora = new Date();
+        const expiracao = new Date(user.RESET_EXPIRATION);
 
-        // Debug no log do Render para você ver o que está acontecendo:
-        console.log(`[DEBUG AUTH] Agora: ${agora.toISOString()} | Expiração: ${dbExpiration.toISOString()}`);
+        if (agora > expiracao) return reply.status(400).send({ success: false, message: "Link expirado." });
 
-        if (agora > dbExpiration) {
-            return reply.status(400).send({ success: false, message: "Este link de segurança expirou." });
+        let qrCodeDataURL = null;
+        // Só gera QR Code se for o primeiro vínculo
+        if (user.MFA_SETUP_COMPLETE === 0) {
+            const otpauth_url = speakeasy.otpauthURL({
+                secret: user.MFA_SECRET,
+                label: `ASYNCX:${user.EMAIL_LOGIN}`,
+                issuer: 'ASYNCX',
+                encoding: 'base32'
+            });
+            qrCodeDataURL = await QRCode.toDataURL(otpauth_url);
         }
 
-        // 3. Se passou na data, gera o QR Code
-        const otpauth_url = speakeasy.otpauthURL({
-            secret: user.MFA_SECRET,
-            label: `ASYNCX:${user.EMAIL_LOGIN}`,
-            issuer: 'ASYNCX',
-            encoding: 'base32'
-        });
-        
-        const qrCodeDataURL = await QRCode.toDataURL(otpauth_url);
-        
         return { 
             success: true, 
             nome: user.NOME_EXIBICAO, 
-            email: user.EMAIL_LOGIN, 
+            email: user.EMAIL_LOGIN,
+            needsMFA: user.MFA_SETUP_COMPLETE === 0, 
             qrCode: qrCodeDataURL 
         };
-
-    } catch (err) {
-        console.error("Erro no setup-check:", err.message);
-        return reply.status(500).send({ success: false, message: "Erro interno no servidor" });
     } finally {
         if (connection) await connection.close();
     }
 });
-
 // ==========================================
 // ROTA 2: FINALIZAR CADASTRO (SALVAR SENHA COM HASH)
 // ==========================================
 fastify.post('/api/auth/setup-finalize', async (request, reply) => {
-    const { token, senha, mfaToken } = request.body;
+    const { token, senha } = request.body; // Padronizado para seu uso anterior
     let connection;
     try {
         connection = await getDbConnection();
-        
-        // 1. Localiza o usuário pelo token de ativação
         const userRes = await connection.execute(
-            `SELECT USER_ID, MFA_SECRET FROM ASYNCX_USERS WHERE RESET_TOKEN = :token`, 
+            `SELECT USER_ID, RESET_EXPIRATION FROM ASYNCX_USERS WHERE RESET_TOKEN = :token`, 
             { token }
         );
         
-        if (userRes.rows.length === 0) throw new Error("Link de ativação inválido ou expirado.");
-        const user = userRes.rows[0];
-
-        // 2. Valida o MFA (Double Check de Segurança)
-        const verified = speakeasy.totp.verify({
-            secret: user.MFA_SECRET,
-            encoding: 'base32',
-            token: mfaToken
-        });
+        if (userRes.rows.length === 0) throw new Error("Link inválido.");
         
-        if (!verified) return reply.status(400).send({ success: false, message: "Código do Authenticator inválido." });
+        // Validação de tempo no Node.js para evitar erro de timezone do banco
+        if (new Date() > new Date(userRes.rows[0].RESET_EXPIRATION)) {
+            throw new Error("Link expirou.");
+        }
 
-        // 3. GERAR O HASH DA SENHA (Defesa contra vazamento de banco)
-        // O bcrypt gera o SALT automaticamente e inclui no hash final
+        const user = userRes.rows[0];
         const senhaHasheada = await bcrypt.hash(senha, saltRounds);
 
-        // 4. Salva o Hash e finaliza o setup
         await connection.execute(
             `UPDATE ASYNCX_USERS 
              SET SENHA_HASH = :senha, 
                  MFA_SETUP_COMPLETE = 1, 
                  RESET_TOKEN = NULL, 
+                 RESET_EXPIRATION = NULL, 
                  STATUS_MONITORAMENTO = 'ATIVO' 
              WHERE USER_ID = :id`,
-            { 
-                senha: senhaHasheada, // Gravando o hash, não a senha limpa
-                id: user.USER_ID 
-            },
+            { senha: senhaHasheada, id: user.USER_ID },
             { autoCommit: true }
         );
 
-        return { success: true, message: "Segurança ASYNCX ativada com sucesso!" };
+        return { success: true, message: "Segurança ASYNCX atualizada!" };
     } catch (err) {
-        console.error("Erro Setup Finalize:", err.message);
+        console.error("Erro Finalize:", err.message);
         return reply.status(500).send({ success: false, message: err.message });
     } finally {
         if (connection) await connection.close();
@@ -466,6 +439,46 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
                 console.error("Erro ao fechar conexão Oracle:", closeErr.message);
             }
         }
+    }
+});
+
+fastify.post('/api/auth/complete-reset', async (request, reply) => {
+    const { token, password } = request.body; // Recebe 'password' do front
+    let connection;
+    try {
+        connection = await getDbConnection();
+        
+        const check = await connection.execute(
+            `SELECT USER_ID, RESET_EXPIRATION FROM ASYNCX_USERS WHERE RESET_TOKEN = :token`,
+            { token }
+        );
+
+        if (check.rows.length === 0) {
+            return reply.status(400).send({ success: false, message: "Link inválido." });
+        }
+
+        const expiracao = new Date(check.rows[0].RESET_EXPIRATION);
+        if (new Date() > expiracao) {
+            return reply.status(400).send({ success: false, message: "Link expirado." });
+        }
+
+        const hash = await bcrypt.hash(password, 10);
+
+        // CORREÇÃO AQUI: Mudamos PASSWORD_HASH para SENHA_HASH conforme seu DESC
+        const sql = `UPDATE ASYNCX_USERS 
+                     SET SENHA_HASH = :hash, 
+                         RESET_TOKEN = NULL, 
+                         RESET_EXPIRATION = NULL,
+                         MFA_SETUP_COMPLETE = 1
+                     WHERE RESET_TOKEN = :token`;
+
+        await connection.execute(sql, { hash, token }, { autoCommit: true });
+        return { success: true, message: "Senha atualizada com sucesso!" };
+    } catch (err) {
+        console.error("Erro no Reset:", err.message);
+        return reply.status(500).send({ success: false, message: "Erro interno." });
+    } finally {
+        if (connection) await connection.close();
     }
 });
 
