@@ -10,6 +10,38 @@ const saltRounds = 10;
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET; 
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
+
+const transporter = nodemailer.createTransport({
+    host: "smtppro.zoho.com",
+    port: 465,
+    secure: true, 
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
+});
+
+// TEMPLATE MINIMALISTA (BRANCO E AZUL)
+const templateEmail = (nome, link, titulo, corpo, textoBotao) => `
+    <div style="background-color: #ffffff; color: #1e293b; padding: 40px; font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; border: 1px solid #e2e8f0; border-radius: 32px; max-width: 500px; margin: auto;">
+        <h1 style="color: #2563eb; letter-spacing: 4px; font-weight: 800; margin-bottom: 5px; font-size: 24px;">ASYNCX</h1>
+        <p style="color: #64748b; text-transform: uppercase; font-size: 9px; letter-spacing: 2px; margin-bottom: 30px; font-weight: bold;">${titulo}</p>
+        
+        <div style="margin: 20px 0; border-top: 1px solid #f1f5f9; border-bottom: 1px solid #f1f5f9; padding: 30px 0;">
+            <p style="font-size: 15px; margin-bottom: 10px;">Olá, <strong style="color: #2563eb;">${nome}</strong>.</p>
+            <p style="font-size: 13px; color: #475569; line-height: 1.6; margin-bottom: 25px;">${corpo}</p>
+            
+            <a href="${link}" style="display: inline-block; background-color: #2563eb; color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 16px; font-weight: bold; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.3);">${textoBotao}</a>
+        </div>
+        
+        <p style="font-size: 10px; color: #94a3b8; line-height: 1.4;">Este link é sensível e expira em 1 hora.<br>Se você não solicitou, por favor ignore este e-mail.</p>
+        
+        <div style="margin-top: 40px;">
+            <p style="font-size: 9px; color: #cbd5e1; font-weight: bold; letter-spacing: 1px;">© 2026 ASYNCX SECURITY | CYBER INTELLIGENCE</p>
+        </div>
+    </div>
+`;
 
 oracledb.thin = true;
 oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT; 
@@ -343,7 +375,7 @@ fastify.post('/api/user/change-password', { preHandler: [validarToken] }, async 
 });
 
 // ==========================================
-// ROTA: SOLICITAR RECUPERAÇÃO DE SENHA
+// ROTA: SOLICITAR RECUPERAÇÃO DE SENHA (ZOHO ATIVO)
 // ==========================================
 fastify.post('/api/auth/forgot-password', async (request, reply) => {
     const { email } = request.body;
@@ -352,23 +384,25 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
     try {
         connection = await getDbConnection();
         
-        // 1. Verifica se o usuário existe
+        // 1. Verifica se o usuário existe e busca o nome para o e-mail
         const res = await connection.execute(
-            `SELECT USER_ID FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`,
+            `SELECT USER_ID, NOME_EXIBICAO FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`,
             { email }
         );
 
+        // Defesa contra enumeração de usuários
         if (res.rows.length === 0) {
-            // Por segurança, não confirmamos se o e-mail existe ou não
             return { success: true, message: "Se o e-mail existir, um link de recuperação foi enviado." };
         }
 
-        // 2. Gera um novo token de reset
+        const user = res.rows[0];
+
+        // 2. Gera um novo token de reset seguro
         const token = crypto.randomBytes(32).toString('hex');
         const expiration = new Date();
         expiration.setHours(expiration.getHours() + 1); // Expira em 1 hora
 
-        // 3. Salva o token no banco
+        // 3. Salva o token e a expiração no banco
         await connection.execute(
             `UPDATE ASYNCX_USERS 
              SET RESET_TOKEN = :token, RESET_EXPIRATION = :exp 
@@ -377,18 +411,33 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
             { autoCommit: true }
         );
 
-        // 4. Aqui você enviaria o e-mail. Por enquanto, vamos retornar o link no console/log
+        // 4. ENVIO DO E-MAIL VIA ZOHO (Layout Premium)
         const resetLink = `https://gilson-ferrer.github.io/CAG/restrito.html?setup=${token}`;
-        console.log(`Link de Recuperação para ${email}: ${resetLink}`);
+        
+        await transporter.sendMail({
+            from: `"ASYNCX SECURITY" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: "🔒 PROTOCOLO DE RECUPERAÇÃO - ASYNCX",
+            html: templateEmail(
+                user.NOME_EXIBICAO, 
+                resetLink, 
+                "SECURITY PROTOCOL: PASSWORD RESET", 
+                "Uma solicitação de redefinição de acesso foi detectada para sua conta. Clique no botão abaixo para autorizar uma nova credencial de segurança.",
+                "REDEFINIR ACESSO AGORA"
+            )
+        });
+
+        // Log interno para auditoria
+        console.log(`E-mail de recuperação enviado para: ${email}`);
 
         return { success: true, message: "Instruções enviadas para o seu e-mail." };
 
     } catch (err) {
-        return reply.status(500).send({ success: false, message: "Erro ao processar solicitação." });
+        console.error("Erro Crítico no Forgot Password:", err.message);
+        return reply.status(500).send({ success: false, message: "Erro ao processar solicitação de recuperação." });
     } finally {
         if (connection) await connection.close();
     }
 });
-
 
 start();
