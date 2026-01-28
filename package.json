@@ -21,6 +21,7 @@
     "nodemailer": "^7.0.13",
     "oracledb": "^6.10.0",
     "qrcode": "^1.5.4",
+    "resend": "^6.9.1",
     "speakeasy": "^2.0.0"
   }
 }

@@ -10,29 +10,9 @@ const saltRounds = 10;
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET; 
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
 
-const transporter = nodemailer.createTransport({
-    host: "smtppro.zoho.com",
-    port: 587,
-    secure: false, // Obrigatório para 587
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-    },
-    tls: {
-        rejectUnauthorized: false // Ignora erros de certificado entre servidores
-    },
-    connectionTimeout: 20000, // Dá 20 segundos de folga
-    greetingTimeout: 10000
-});
-transporter.verify(function (error, success) {
-  if (error) {
-    console.log("[DEBUG SMTP] Falha na conexão: ", error.message);
-  } else {
-    console.log("[DEBUG SMTP] Servidor pronto para enviar e-mails");
-  }
-});
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // TEMPLATE MINIMALISTA (BRANCO E AZUL)
 const templateEmail = (nome, link, titulo, corpo, textoBotao) => `
@@ -392,14 +372,13 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
 
     try {
         connection = await getDbConnection();
-        
         const res = await connection.execute(
             `SELECT USER_ID, NOME_EXIBICAO FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`,
             { email }
         );
 
         if (res.rows.length === 0) {
-            return { success: true, message: "Instruções enviadas se o e-mail existir." };
+            return { success: true, message: "Protocolo iniciado. Verifique seu e-mail." };
         }
 
         const user = res.rows[0];
@@ -413,27 +392,24 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
             { autoCommit: true }
         );
 
-        // --- MUDANÇA CRÍTICA AQUI ---
-        // 1. Respondemos ao frontend IMEDIATAMENTE (Destrava o botão no site)
-        reply.send({ success: true, message: "Protocolo de segurança enviado para o e-mail cadastrado." });
+        // Resposta imediata para o site
+        reply.send({ success: true, message: "Link de segurança enviado!" });
 
-        // 2. Disparamos o e-mail em SEGUNDO PLANO (sem await)
-        const resetLink = `https://gilson-ferrer.github.io/CAG/restrito.html?setup=${token}`;
+        // ENVIO VIA API RESEND (Não usa porta SMTP, por isso não dá timeout)
+        const resetLink = `https://asyncx.com.br/restrito.html?setup=${token}`;
         
-        transporter.sendMail({
-            from: `"ASYNCX SECURITY" <${process.env.EMAIL_USER}>`,
+        await resend.emails.send({
+            from: 'Segurança ASYNCX <onboarding@resend.dev>', // Use este para testar agora
             to: email,
-            subject: "🔒 PROTOCOLO DE RECUPERAÇÃO - ASYNCX",
-            html: templateEmail(user.NOME_EXIBICAO, resetLink, "SECURITY PROTOCOL", "Recuperação de acesso detectada.", "REDEFINIR ACESSO")
-        }).then(() => {
-            console.log(`[SUCESSO SMTP] E-mail enviado para: ${email}`);
-        }).catch(err => {
-            console.error(`[FALHA SMTP] Erro ao enviar para ${email}:`, err.message);
+            subject: '🔒 PROTOCOLO DE RECUPERAÇÃO - ASYNCX',
+            html: templateEmail(user.NOME_EXIBICAO, resetLink, "SECURITY PROTOCOL", "Recuperação de acesso solicitada.", "REDEFINIR AGORA")
         });
 
+        console.log(`[RESEND OK] E-mail enviado para: ${email}`);
+
     } catch (err) {
-        console.error("Erro no Banco:", err.message);
-        return reply.status(500).send({ success: false, message: "Erro no processamento interno." });
+        console.error("Erro Crítico:", err.message);
+        return reply.status(500).send({ success: false, message: "Erro interno no servidor." });
     } finally {
         if (connection) await connection.close();
     }
