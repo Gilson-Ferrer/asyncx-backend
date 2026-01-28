@@ -7,9 +7,24 @@ const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const bcrypt = require('bcrypt');
 const saltRounds = 10;
+const jwt = require('jsonwebtoken');
+const JWT_SECRET = process.env.JWT_SECRET; 
 
 oracledb.thin = true;
 oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT; 
+
+async function validarToken(request, reply) {
+    try {
+        const authHeader = request.headers.authorization;
+        if (!authHeader) throw new Error("Acesso negado.");
+        
+        const token = authHeader.split(' ')[1]; // Remove o "Bearer "
+        const decoded = jwt.verify(token, JWT_SECRET);
+        request.user = decoded; // Salva os dados do usuário na requisição
+    } catch (err) {
+        return reply.status(401).send({ success: false, message: "Sessão inválida ou expirada." });
+    }
+}
 
 fastify.register(rateLimit, {
   max: 10,
@@ -120,47 +135,64 @@ fastify.post('/api/auth/setup-finalize', async (request, reply) => {
     }
 });
 
+
 // ==========================================
-// ROTA 3: LOGIN DEFINITIVO (COM MFA E BCRYPT)
+// ROTA 3: LOGIN DEFINITIVO (COM MFA, BCRYPT E JWT)
 // ==========================================
 fastify.post('/api/login', async (request, reply) => {
     const { email, senha, mfaToken } = request.body;
     let connection;
+
     try {
         connection = await getDbConnection();
-        const sql = `SELECT NOME_EXIBICAO, SENHA_HASH, MFA_SECRET, STATUS_MONITORAMENTO, QTD_DISPOSITIVOS 
+        
+        // 1. Busca os dados necessários para validação e para o Token
+        const sql = `SELECT USER_ID, NOME_EXIBICAO, SENHA_HASH, MFA_SECRET, STATUS_MONITORAMENTO, QTD_DISPOSITIVOS 
                      FROM ASYNCX_USERS 
                      WHERE EMAIL_LOGIN = :email`;
         const result = await connection.execute(sql, { email });
 
-        // 1. Verifica se o usuário existe
+        // Defesa contra enumeração: Erro genérico se não encontrar e-mail
         if (result.rows.length === 0) {
             return reply.status(401).send({ success: false, message: "Credenciais inválidas." });
         }
         
         const user = result.rows[0];
 
-        // 2. COMPARAÇÃO SEGURA: Texto plano vs Hash do Banco
+        // 2. Validação da Senha (Bcrypt)
         const senhaValida = await bcrypt.compare(senha, user.SENHA_HASH);
         if (!senhaValida) {
             return reply.status(401).send({ success: false, message: "Credenciais inválidas." });
         }
 
-        // 3. Validação do MFA (Time-based One-Time Password)
+        // 3. Validação do MFA (Speakeasy)
         const verified = speakeasy.totp.verify({
             secret: user.MFA_SECRET,
             encoding: 'base32',
             token: mfaToken,
-            window: 1 // Janela de tolerância para drift de tempo
+            window: 1 
         });
 
         if (!verified) {
             return reply.status(401).send({ success: false, message: "Código MFA inválido." });
         }
 
-        // 4. Retorno de Sucesso
+        // 4. GERAÇÃO DO TOKEN JWT (O Crachá de Acesso)
+        // Guardamos o e-mail e o ID dentro do token criptografado
+        const token = jwt.sign(
+            { 
+                userId: user.USER_ID, 
+                email: email, 
+                nome: user.NOME_EXIBICAO 
+            }, 
+            JWT_SECRET, 
+            { expiresIn: '2h' } // Sessão expira automaticamente em 2 horas
+        );
+
+        // 5. Retorno de Sucesso com o Token
         return {
             success: true,
+            token: token, // O frontend DEVE salvar este token
             data: {
                 nome: user.NOME_EXIBICAO,
                 status: user.STATUS_MONITORAMENTO,
@@ -168,9 +200,10 @@ fastify.post('/api/login', async (request, reply) => {
                 servico: "Segurança Gerenciada ASYNCX"
             }
         };
+
     } catch (err) {
         console.error("Erro no Login:", err);
-        return reply.status(500).send({ success: false, message: "Erro na autenticação" });
+        return reply.status(500).send({ success: false, message: "Erro interno na autenticação" });
     } finally {
         if (connection) await connection.close();
     }
@@ -213,9 +246,10 @@ const start = async () => {
   }
 };
 
-// ROTA: BUSCAR DADOS COMPLETOS (VERSÃO EXPANDIDA)
-fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
-    const { email } = request.params;
+// ROTA PROTEGIDA: Não usa mais :email na URL
+fastify.get('/api/user/dashboard-data', { preHandler: [validarToken] }, async (request, reply) => {
+    // O e-mail agora vem do TOKEN decodificado pelo validarToken
+    const email = request.user.email; 
     let connection;
 
     try {
@@ -227,6 +261,8 @@ fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
                          ASAAS_CUSTOMER_ID, ASAAS_SUBSCRIPTION_ID 
                          FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`;
         const userRes = await connection.execute(userSql, { email });
+        
+        if (userRes.rows.length === 0) return reply.status(404).send({ success: false, message: "Perfil não encontrado." });
         const user = userRes.rows[0];
 
         // 2. Busca Documentos
@@ -234,7 +270,7 @@ fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
                          FROM ASYNCX_DOCUMENTS WHERE USER_ID = :id ORDER BY DATA_UPLOAD DESC`;
         const docsRes = await connection.execute(docsSql, { id: user.USER_ID });
 
-        // 3. Busca Financeiro (Faturas Asaas)
+        // 3. Busca Financeiro
         const billsSql = `SELECT ASAAS_PAYMENT_ID, VALOR, STATUS_PAGO, LINK_BOLETO, DATA_VENCIMENTO
                           FROM ASYNCX_BILLING WHERE USER_ID = :id ORDER BY DATA_VENCIMENTO DESC`;
         const billsRes = await connection.execute(billsSql, { id: user.USER_ID });
@@ -253,19 +289,30 @@ fastify.get('/api/user/dashboard-data/:email', async (request, reply) => {
 });
 
 // ==========================================
-// NOVA ROTA: ALTERAR SENHA (COM HASHING)
+// ROTA: ALTERAR SENHA (PROTEGIDA E COM BCRYPT)
 // ==========================================
-fastify.post('/api/user/change-password', async (request, reply) => {
-    const { email, novaSenha } = request.body;
+
+fastify.post('/api/user/change-password', { preHandler: [validarToken] }, async (request, reply) => {
+
+    const email = request.user.email; 
+    const { novaSenha } = request.body;
+    
     let connection;
     try {
+        // 1. Validação básica (caso o frontend falhe)
+        if (!novaSenha || novaSenha.length < 8) {
+            return reply.status(400).send({ 
+                success: false, 
+                message: "A senha não cumpre os requisitos mínimos de segurança." 
+            });
+        }
+
         connection = await getDbConnection();
 
-        // 1. GERAR O HASH da nova senha
-        // O saltRounds deve ser o mesmo usado nas outras rotas (10)
+        // 2. GERAR O HASH da nova senha (Bcrypt com 10 rounds)
         const novaSenhaHasheada = await bcrypt.hash(novaSenha, 10);
 
-        // 2. EXECUTAR O UPDATE com o hash
+        // 3. EXECUTAR O UPDATE com o hash
         const sql = `UPDATE ASYNCX_USERS 
                      SET SENHA_HASH = :senha 
                      WHERE EMAIL_LOGIN = :email`;
@@ -276,18 +323,26 @@ fastify.post('/api/user/change-password', async (request, reply) => {
             { autoCommit: true }
         );
 
-        // Verifica se o e-mail realmente existia e foi atualizado
+        // Como o e-mail vem do token, se chegar aqui e não afetar linhas, algo está errado no banco
         if (result.rowsAffected === 0) {
-            return reply.status(404).send({ success: false, message: "Usuário não encontrado." });
+            return reply.status(404).send({ success: false, message: "Usuário não localizado no sistema." });
         }
 
-        return { success: true, message: "Senha alterada com sucesso e protegida!" };
+        return { 
+            success: true, 
+            message: "Sua senha foi atualizada e criptografada com sucesso!" 
+        };
+
     } catch (err) {
-        console.error("Erro ao trocar senha:", err.message);
-        return reply.status(500).send({ success: false, message: "Erro interno ao processar alteração." });
+        console.error("Erro Crítico ao trocar senha:", err.message);
+        return reply.status(500).send({ 
+            success: false, 
+            message: "Falha interna ao processar a alteração de segurança." 
+        });
     } finally {
         if (connection) await connection.close();
     }
 });
+
 
 start();
