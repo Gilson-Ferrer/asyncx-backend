@@ -13,16 +13,19 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true, 
+    host: "smtppro.zoho.com",
+    port: 587,
+    secure: false, // Obrigatório para 587
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
     },
-    connectionTimeout: 15000 
+    tls: {
+        rejectUnauthorized: false // Ignora erros de certificado entre servidores
+    },
+    connectionTimeout: 20000, // Dá 20 segundos de folga
+    greetingTimeout: 10000
 });
-
 transporter.verify(function (error, success) {
   if (error) {
     console.log("[DEBUG SMTP] Falha na conexão: ", error.message);
@@ -383,9 +386,6 @@ fastify.post('/api/user/change-password', { preHandler: [validarToken] }, async 
     }
 });
 
-// ==========================================
-// ROTA: SOLICITAR RECUPERAÇÃO DE SENHA (ZOHO ATIVO)
-// ==========================================
 fastify.post('/api/auth/forgot-password', async (request, reply) => {
     const { email } = request.body;
     let connection;
@@ -393,57 +393,47 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
     try {
         connection = await getDbConnection();
         
-        // 1. Verifica se o usuário existe e busca o nome para o e-mail
         const res = await connection.execute(
             `SELECT USER_ID, NOME_EXIBICAO FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`,
             { email }
         );
 
-        // Defesa contra enumeração de usuários
         if (res.rows.length === 0) {
-            return { success: true, message: "Se o e-mail existir, um link de recuperação foi enviado." };
+            return { success: true, message: "Instruções enviadas se o e-mail existir." };
         }
 
         const user = res.rows[0];
-
-        // 2. Gera um novo token de reset seguro
         const token = crypto.randomBytes(32).toString('hex');
         const expiration = new Date();
-        expiration.setHours(expiration.getHours() + 1); // Expira em 1 hora
+        expiration.setHours(expiration.getHours() + 1);
 
-        // 3. Salva o token e a expiração no banco
         await connection.execute(
-            `UPDATE ASYNCX_USERS 
-             SET RESET_TOKEN = :token, RESET_EXPIRATION = :exp 
-             WHERE EMAIL_LOGIN = :email`,
+            `UPDATE ASYNCX_USERS SET RESET_TOKEN = :token, RESET_EXPIRATION = :exp WHERE EMAIL_LOGIN = :email`,
             { token, exp: expiration, email },
             { autoCommit: true }
         );
 
-        // 4. ENVIO DO E-MAIL VIA ZOHO (Layout Premium)
+        // --- MUDANÇA CRÍTICA AQUI ---
+        // 1. Respondemos ao frontend IMEDIATAMENTE (Destrava o botão no site)
+        reply.send({ success: true, message: "Protocolo de segurança enviado para o e-mail cadastrado." });
+
+        // 2. Disparamos o e-mail em SEGUNDO PLANO (sem await)
         const resetLink = `https://gilson-ferrer.github.io/CAG/restrito.html?setup=${token}`;
         
-        await transporter.sendMail({
+        transporter.sendMail({
             from: `"ASYNCX SECURITY" <${process.env.EMAIL_USER}>`,
             to: email,
             subject: "🔒 PROTOCOLO DE RECUPERAÇÃO - ASYNCX",
-            html: templateEmail(
-                user.NOME_EXIBICAO, 
-                resetLink, 
-                "SECURITY PROTOCOL: PASSWORD RESET", 
-                "Uma solicitação de redefinição de acesso foi detectada para sua conta. Clique no botão abaixo para autorizar uma nova credencial de segurança.",
-                "REDEFINIR ACESSO AGORA"
-            )
+            html: templateEmail(user.NOME_EXIBICAO, resetLink, "SECURITY PROTOCOL", "Recuperação de acesso detectada.", "REDEFINIR ACESSO")
+        }).then(() => {
+            console.log(`[SUCESSO SMTP] E-mail enviado para: ${email}`);
+        }).catch(err => {
+            console.error(`[FALHA SMTP] Erro ao enviar para ${email}:`, err.message);
         });
 
-        // Log interno para auditoria
-        console.log(`E-mail de recuperação enviado para: ${email}`);
-
-        return { success: true, message: "Instruções enviadas para o seu e-mail." };
-
     } catch (err) {
-        console.error("Erro Crítico no Forgot Password:", err.message);
-        return reply.status(500).send({ success: false, message: "Erro ao processar solicitação de recuperação." });
+        console.error("Erro no Banco:", err.message);
+        return reply.status(500).send({ success: false, message: "Erro no processamento interno." });
     } finally {
         if (connection) await connection.close();
     }
