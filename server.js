@@ -84,24 +84,51 @@ fastify.get('/api/auth/setup-check/:token', async (request, reply) => {
     let connection;
     try {
         connection = await getDbConnection();
-        const sql = `SELECT USER_ID, EMAIL_LOGIN, MFA_SECRET, NOME_EXIBICAO 
+        
+        // 1. Removemos a verificação de data da Query SQL
+        const sql = `SELECT USER_ID, EMAIL_LOGIN, MFA_SECRET, NOME_EXIBICAO, RESET_EXPIRATION 
                      FROM ASYNCX_USERS 
                      WHERE RESET_TOKEN = :token 
-                     AND RESET_EXPIRATION > CURRENT_TIMESTAMP 
                      AND MFA_SETUP_COMPLETE = 0`;
+                     
         const result = await connection.execute(sql, { token });
-        if (result.rows.length === 0) return reply.status(400).send({ success: false, message: "Link inválido ou expirado." });
-        
+
+        if (result.rows.length === 0) {
+            return reply.status(400).send({ success: false, message: "Link inválido." });
+        }
+
         const user = result.rows[0];
+
+        // 2. Validação de Data no Node.js (A prova de falhas de fuso horário)
+        const dbExpiration = new Date(user.RESET_EXPIRATION);
+        const agora = new Date();
+
+        // Debug no log do Render para você ver o que está acontecendo:
+        console.log(`[DEBUG AUTH] Agora: ${agora.toISOString()} | Expiração: ${dbExpiration.toISOString()}`);
+
+        if (agora > dbExpiration) {
+            return reply.status(400).send({ success: false, message: "Este link de segurança expirou." });
+        }
+
+        // 3. Se passou na data, gera o QR Code
         const otpauth_url = speakeasy.otpauthURL({
             secret: user.MFA_SECRET,
             label: `ASYNCX:${user.EMAIL_LOGIN}`,
             issuer: 'ASYNCX',
             encoding: 'base32'
         });
+        
         const qrCodeDataURL = await QRCode.toDataURL(otpauth_url);
-        return { success: true, nome: user.NOME_EXIBICAO, email: user.EMAIL_LOGIN, qrCode: qrCodeDataURL };
+        
+        return { 
+            success: true, 
+            nome: user.NOME_EXIBICAO, 
+            email: user.EMAIL_LOGIN, 
+            qrCode: qrCodeDataURL 
+        };
+
     } catch (err) {
+        console.error("Erro no setup-check:", err.message);
         return reply.status(500).send({ success: false, message: "Erro interno no servidor" });
     } finally {
         if (connection) await connection.close();
@@ -411,7 +438,7 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
         resend.emails.send({
             from: 'Segurança ASYNCX <contato@asyncx.com.br>',
             to: email,
-            subject: '🔒 PROTOCOLO DE RECUPERAÇÃO - ASYNCX',
+            subject: 'PROTOCOLO DE RECUPERAÇÃO - ASYNCX',
             html: templateEmail(
                 user.NOME_EXIBICAO, 
                 resetLink, 
