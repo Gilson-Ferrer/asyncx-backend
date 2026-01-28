@@ -26,6 +26,14 @@ const transporter = nodemailer.createTransport({
     connectionTimeout: 10000 // Aumentamos para 10s para dar tempo da rota transatlântica
 });
 
+transporter.verify(function (error, success) {
+  if (error) {
+    console.log("[DEBUG SMTP] Falha na conexão: ", error.message);
+  } else {
+    console.log("[DEBUG SMTP] Servidor pronto para enviar e-mails");
+  }
+});
+
 // TEMPLATE MINIMALISTA (BRANCO E AZUL)
 const templateEmail = (nome, link, titulo, corpo, textoBotao) => `
     <div style="background-color: #ffffff; color: #1e293b; padding: 40px; font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; border: 1px solid #e2e8f0; border-radius: 32px; max-width: 500px; margin: auto;">
