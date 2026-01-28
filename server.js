@@ -375,52 +375,70 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
 
     try {
         connection = await getDbConnection();
+        
+        // 1. Busca o usuário
         const res = await connection.execute(
             `SELECT USER_ID, NOME_EXIBICAO FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`,
             { email }
         );
 
+        // Defesa contra enumeração: resposta genérica se não existir
         if (res.rows.length === 0) {
-            return { success: true, message: "Protocolo iniciado. Verifique seu e-mail." };
+            return { success: true, message: "Protocolo iniciado. Verifique seu e-mail se estiver cadastrado." };
         }
 
         const user = res.rows[0];
         const token = crypto.randomBytes(32).toString('hex');
-        const expiration = new Date();
-        expiration.setHours(expiration.getHours() + 1);
+        
+        // AJUSTE DE EXPIRAÇÃO: 1 hora a partir de agora (independente de timezone)
+        const expiration = new Date(Date.now() + 3600 * 1000); 
 
+        // 2. Salva o token no banco
         await connection.execute(
-            `UPDATE ASYNCX_USERS SET RESET_TOKEN = :token, RESET_EXPIRATION = :exp WHERE EMAIL_LOGIN = :email`,
+            `UPDATE ASYNCX_USERS 
+             SET RESET_TOKEN = :token, RESET_EXPIRATION = :exp 
+             WHERE EMAIL_LOGIN = :email`,
             { token, exp: expiration, email },
             { autoCommit: true }
         );
 
-        // Resposta imediata para o site
+        // 3. RESPOSTA INSTANTÂNEA PARA O SITE (Destrava o botão na hora)
         reply.send({ success: true, message: "Link de segurança enviado!" });
 
-        // ENVIO VIA API RESEND (Não usa porta SMTP, por isso não dá timeout)
+        // 4. ENVIO EM BACKGROUND (Sem 'await' para não segurar a requisição)
         const resetLink = `https://asyncx.com.br/restrito.html?setup=${token}`;
         
-        await resend.emails.send({
-            from: 'Segurança ASYNCX <contato@asyncx.com.br>', // REMETENTE OFICIAL
+        resend.emails.send({
+            from: 'Segurança ASYNCX <contato@asyncx.com.br>',
             to: email,
-            subject: 'PROTOCOLO DE RECUPERAÇÃO - ASYNCX',
+            subject: '🔒 PROTOCOLO DE RECUPERAÇÃO - ASYNCX',
             html: templateEmail(
                 user.NOME_EXIBICAO, 
                 resetLink, 
                 "SECURITY PROTOCOL", 
-                "Uma solicitação de redefinição de acesso foi detectada. Se não foi você, ignore este alerta.", 
-                "REDEFINIR ACESSO"
+                "Uma solicitação de redefinição de acesso foi detectada para sua conta. Este link expira em 1 hora.", 
+                "REDEFINIR ACESSO AGORA"
             )
+        }).then(() => {
+            console.log(`[RESEND OK] E-mail enviado com sucesso para: ${email}`);
+        }).catch(err => {
+            console.error(`[RESEND ERROR]: Falha no envio para ${email}:`, err.message);
         });
-        
-        console.log(`[RESEND OK] E-mail enviado para: ${email}`);
 
     } catch (err) {
-        console.error("Erro Crítico:", err.message);
-        return reply.status(500).send({ success: false, message: "Erro interno no servidor." });
+        console.error("Erro Crítico no Forgot Password:", err.message);
+        // Se ainda não enviamos o reply.send acima, enviamos o erro
+        if (!reply.sent) {
+            return reply.status(500).send({ success: false, message: "Erro interno no servidor." });
+        }
     } finally {
-        if (connection) await connection.close();
+        if (connection) {
+            try {
+                await connection.close();
+            } catch (closeErr) {
+                console.error("Erro ao fechar conexão Oracle:", closeErr.message);
+            }
+        }
     }
 });
 
