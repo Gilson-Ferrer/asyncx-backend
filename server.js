@@ -9,6 +9,7 @@ const bcrypt = require('bcrypt');
 const saltRounds = 10;
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET; 
+const crypto = require('crypto');
 
 oracledb.thin = true;
 oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT; 
@@ -339,6 +340,54 @@ fastify.post('/api/user/change-password', { preHandler: [validarToken] }, async 
             success: false, 
             message: "Falha interna ao processar a alteração de segurança." 
         });
+    } finally {
+        if (connection) await connection.close();
+    }
+});
+
+// ==========================================
+// ROTA: SOLICITAR RECUPERAÇÃO DE SENHA
+// ==========================================
+fastify.post('/api/auth/forgot-password', async (request, reply) => {
+    const { email } = request.body;
+    let connection;
+
+    try {
+        connection = await getDbConnection();
+        
+        // 1. Verifica se o usuário existe
+        const res = await connection.execute(
+            `SELECT USER_ID FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`,
+            { email }
+        );
+
+        if (res.rows.length === 0) {
+            // Por segurança, não confirmamos se o e-mail existe ou não
+            return { success: true, message: "Se o e-mail existir, um link de recuperação foi enviado." };
+        }
+
+        // 2. Gera um novo token de reset
+        const token = crypto.randomBytes(32).toString('hex');
+        const expiration = new Date();
+        expiration.setHours(expiration.getHours() + 1); // Expira em 1 hora
+
+        // 3. Salva o token no banco
+        await connection.execute(
+            `UPDATE ASYNCX_USERS 
+             SET RESET_TOKEN = :token, RESET_EXPIRATION = :exp 
+             WHERE EMAIL_LOGIN = :email`,
+            { token, exp: expiration, email },
+            { autoCommit: true }
+        );
+
+        // 4. Aqui você enviaria o e-mail. Por enquanto, vamos retornar o link no console/log
+        const resetLink = `https://gilson-ferrer.github.io/CAG/restrito.html?setup=${token}`;
+        console.log(`Link de Recuperação para ${email}: ${resetLink}`);
+
+        return { success: true, message: "Instruções enviadas para o seu e-mail." };
+
+    } catch (err) {
+        return reply.status(500).send({ success: false, message: "Erro ao processar solicitação." });
     } finally {
         if (connection) await connection.close();
     }
