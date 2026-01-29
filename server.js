@@ -307,7 +307,7 @@ fastify.get('/api/user/dashboard-data', { preHandler: [validarToken] }, async (r
                                 VALOR, 
                                 STATUS_PAGO, 
                                 LINK_BOLETO, 
-                                TO_CHAR(DATA_VENCIMENTO, 'DD/MM/YYYY') as VENCIMENTO,
+                                TO_CHAR(DATA_VENCIMENTO, 'DD/MM/YYYY') as DATA_VENCIMENTO, -- Mudamos o alias aqui
                                 DESCRICAO
                         FROM ASYNCX_BILLING 
                         WHERE USER_ID = :id 
