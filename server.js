@@ -501,8 +501,8 @@ fastify.post('/api/webhooks/asaas', async (request, reply) => {
     const { event, payment } = request.body;
     let connection;
 
-    // Log para você monitorar no painel do Render
-    console.log(`[WEBHOOK ASAAS] Evento: ${event} | ID Pagamento: ${payment.id}`);
+    // Log para monitoramento no painel do Render
+    console.log(`[WEBHOOK ASAAS] Evento: ${event} | ID Pagamento: ${payment.id} | Sub: ${payment.subscription || 'N/A'}`);
 
     // Eventos que indicam que o dinheiro entrou
     const eventosSucesso = ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH_UNDONE'];
@@ -511,26 +511,38 @@ fastify.post('/api/webhooks/asaas', async (request, reply) => {
         try {
             connection = await getDbConnection();
 
+            // Pegamos o ID do pagamento e o ID da assinatura (se existir)
+            const payId = payment.id ? payment.id.trim() : null;
+            const subId = payment.subscription ? payment.subscription.trim() : null;
+
+            // Buscamos por qualquer um dos dois IDs para garantir o vínculo
             const sql = `UPDATE ASYNCX_BILLING 
                          SET STATUS_PAGO = 'PAGO' 
-                         WHERE TRIM(ASAAS_PAYMENT_ID) = :paymentId`;
+                         WHERE TRIM(ASAAS_PAYMENT_ID) = :id1 
+                            OR TRIM(ASAAS_PAYMENT_ID) = :id2`;
 
-            const result = await connection.execute(sql, { paymentId: payment.id.trim() }, { autoCommit: true });
+            const result = await connection.execute(
+                sql, 
+                { id1: payId, id2: subId }, 
+                { autoCommit: true }
+            );
 
             if (result.rowsAffected > 0) {
-                console.log(`[ORACLE] Pagamento ${payment.id} marcado como PAGO.`);
+                console.log(`[ORACLE] Sucesso: ${result.rowsAffected} linha(s) atualizada(s) para PAGO.`);
+            } else {
+                console.log(`[AVISO] Nenhum registro encontrado no Oracle para ID ${payId} ou Sub ${subId}`);
             }
             
             return reply.status(200).send({ received: true });
         } catch (err) {
-            console.error("[ERRO WEBHOOK]", err.message);
-            return reply.status(500).send();
+            console.error("[ERRO CRÍTICO WEBHOOK]", err.message);
+            return reply.status(500).send({ error: "Erro interno ao atualizar banco" });
         } finally {
             if (connection) await connection.close();
         }
     }
 
-    // Retornamos 200 para qualquer outro evento para o Asaas não reenviar
+    // Retornamos 200 para outros eventos para evitar reenvios do Asaas
     return reply.status(200).send({ received: true });
 });
 
