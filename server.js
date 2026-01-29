@@ -495,55 +495,73 @@ fastify.post('/api/auth/complete-reset', async (request, reply) => {
 });
 
 // ==========================================
-// ROTA: WEBHOOK ASAAS (ATUALIZA STATUS DE PAGAMENTO)
+// ROTA: WEBHOOK ASAAS (TOTALMENTE AUTOMATIZADA)
 // ==========================================
 fastify.post('/api/webhooks/asaas', async (request, reply) => {
     const { event, payment } = request.body;
     let connection;
 
-    // Log para monitoramento no painel do Render
-    console.log(`[WEBHOOK ASAAS] Evento: ${event} | ID Pagamento: ${payment.id} | Sub: ${payment.subscription || 'N/A'}`);
+    // Log estratégico para auditoria no Render
+    console.log(`[WEBHOOK ASAAS] Evento: ${event} | ID: ${payment.id} | Sub: ${payment.subscription || 'N/A'}`);
 
-    // Eventos que indicam que o dinheiro entrou
-    const eventosSucesso = ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH_UNDONE'];
+    try {
+        connection = await getDbConnection();
 
-    if (eventosSucesso.includes(event)) {
-        try {
-            connection = await getDbConnection();
+        // --- CASO A: NOVA FATURA GERADA (RECORRÊNCIA AUTOMÁTICA) ---
+        // Se o Asaas criou um novo boleto para o mês seguinte de uma assinatura
+        if (event === 'PAYMENT_CREATED' && payment.subscription) {
+            const sqlInsert = `INSERT INTO ASYNCX_BILLING 
+                (USER_ID, ASAAS_PAYMENT_ID, VALOR, DATA_VENCIMENTO, STATUS_PAGO, LINK_BOLETO, DESCRICAO)
+                SELECT USER_ID, :payId, :val, :venc, 'PENDENTE', :link, :desc
+                FROM ASYNCX_USERS WHERE ASAAS_CUSTOMER_ID = :cusId
+                FETCH FIRST 1 ROW ONLY`;
 
-            // Pegamos o ID do pagamento e o ID da assinatura (se existir)
+            const resInsert = await connection.execute(sqlInsert, {
+                payId: payment.id,
+                val: payment.value,
+                venc: new Date(payment.dueDate),
+                link: payment.invoiceUrl || payment.bankSlipUrl,
+                desc: payment.description || 'Assinatura Mensal ASYNCX',
+                cusId: payment.customer
+            }, { autoCommit: true });
+
+            if (resInsert.rowsAffected > 0) {
+                console.log(`[ORACLE] Próxima fatura ${payment.id} inserida automaticamente.`);
+            }
+        }
+
+        // --- CASO B: PAGAMENTO CONFIRMADO (BAIXA NO FINANCEIRO) ---
+        const eventosSucesso = ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH_UNDONE'];
+        
+        if (eventosSucesso.includes(event)) {
             const payId = payment.id ? payment.id.trim() : null;
             const subId = payment.subscription ? payment.subscription.trim() : null;
 
-            // Buscamos por qualquer um dos dois IDs para garantir o vínculo
-            const sql = `UPDATE ASYNCX_BILLING 
-                         SET STATUS_PAGO = 'PAGO' 
-                         WHERE TRIM(ASAAS_PAYMENT_ID) = :id1 
-                            OR TRIM(ASAAS_PAYMENT_ID) = :id2`;
+            // Tenta atualizar pelo ID do pagamento OU pelo ID da assinatura
+            const sqlUpdate = `UPDATE ASYNCX_BILLING 
+                               SET STATUS_PAGO = 'PAGO' 
+                               WHERE TRIM(ASAAS_PAYMENT_ID) = :id1 
+                                  OR TRIM(ASAAS_PAYMENT_ID) = :id2`;
 
             const result = await connection.execute(
-                sql, 
+                sqlUpdate, 
                 { id1: payId, id2: subId }, 
                 { autoCommit: true }
             );
 
-            if (result.rowsAffected > 0) {
-                console.log(`[ORACLE] Sucesso: ${result.rowsAffected} linha(s) atualizada(s) para PAGO.`);
-            } else {
-                console.log(`[AVISO] Nenhum registro encontrado no Oracle para ID ${payId} ou Sub ${subId}`);
-            }
-            
-            return reply.status(200).send({ received: true });
-        } catch (err) {
-            console.error("[ERRO CRÍTICO WEBHOOK]", err.message);
-            return reply.status(500).send({ error: "Erro interno ao atualizar banco" });
-        } finally {
-            if (connection) await connection.close();
+            console.log(`[ORACLE] Status PAGO: ${result.rowsAffected} linha(s) atualizada(s).`);
         }
-    }
 
-    // Retornamos 200 para outros eventos para evitar reenvios do Asaas
-    return reply.status(200).send({ received: true });
+        // Importante: Sempre retornar 200 para o Asaas não penalizar sua URL
+        return reply.status(200).send({ success: true });
+
+    } catch (err) {
+        console.error("[ERRO WEBHOOK]", err.message);
+        // Mesmo com erro, retornamos 200 para o Asaas não travar a fila de envios
+        return reply.status(200).send({ error: err.message });
+    } finally {
+        if (connection) await connection.close();
+    }
 });
 
 start();
