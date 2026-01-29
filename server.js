@@ -513,9 +513,9 @@ fastify.post('/api/webhooks/asaas', async (request, reply) => {
 
             const sql = `UPDATE ASYNCX_BILLING 
                          SET STATUS_PAGO = 'PAGO' 
-                         WHERE ASAAS_PAYMENT_ID = :paymentId`;
+                         WHERE TRIM(ASAAS_PAYMENT_ID) = :paymentId`;
 
-            const result = await connection.execute(sql, { paymentId: payment.id }, { autoCommit: true });
+            const result = await connection.execute(sql, { paymentId: payment.id.trim() }, { autoCommit: true });
 
             if (result.rowsAffected > 0) {
                 console.log(`[ORACLE] Pagamento ${payment.id} marcado como PAGO.`);
