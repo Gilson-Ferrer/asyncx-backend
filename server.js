@@ -302,9 +302,17 @@ fastify.get('/api/user/dashboard-data', { preHandler: [validarToken] }, async (r
                          FROM ASYNCX_DOCUMENTS WHERE USER_ID = :id ORDER BY DATA_UPLOAD DESC`;
         const docsRes = await connection.execute(docsSql, { id: user.USER_ID });
 
-        // 3. Busca Financeiro
-        const billsSql = `SELECT ASAAS_PAYMENT_ID, VALOR, STATUS_PAGO, LINK_BOLETO, DATA_VENCIMENTO
-                          FROM ASYNCX_BILLING WHERE USER_ID = :id ORDER BY DATA_VENCIMENTO DESC`;
+        // 3. Busca Financeiro (Atualizada com Descrição e Valor)
+        const billsSql = `SELECT ASAAS_PAYMENT_ID, 
+                                VALOR, 
+                                STATUS_PAGO, 
+                                LINK_BOLETO, 
+                                TO_CHAR(DATA_VENCIMENTO, 'DD/MM/YYYY') as VENCIMENTO,
+                                DESCRICAO
+                        FROM ASYNCX_BILLING 
+                        WHERE USER_ID = :id 
+                        ORDER BY DATA_VENCIMENTO DESC 
+                        FETCH FIRST 12 ROWS ONLY`;
         const billsRes = await connection.execute(billsSql, { id: user.USER_ID });
 
         return {
@@ -484,6 +492,46 @@ fastify.post('/api/auth/complete-reset', async (request, reply) => {
     } finally {
         if (connection) await connection.close();
     }
+});
+
+// ==========================================
+// ROTA: WEBHOOK ASAAS (ATUALIZA STATUS DE PAGAMENTO)
+// ==========================================
+fastify.post('/api/webhooks/asaas', async (request, reply) => {
+    const { event, payment } = request.body;
+    let connection;
+
+    // Log para você monitorar no painel do Render
+    console.log(`[WEBHOOK ASAAS] Evento: ${event} | ID Pagamento: ${payment.id}`);
+
+    // Eventos que indicam que o dinheiro entrou
+    const eventosSucesso = ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH_UNDONE'];
+
+    if (eventosSucesso.includes(event)) {
+        try {
+            connection = await getDbConnection();
+
+            const sql = `UPDATE ASYNCX_BILLING 
+                         SET STATUS_PAGO = 'PAGO' 
+                         WHERE ASAAS_PAYMENT_ID = :paymentId`;
+
+            const result = await connection.execute(sql, { paymentId: payment.id }, { autoCommit: true });
+
+            if (result.rowsAffected > 0) {
+                console.log(`[ORACLE] Pagamento ${payment.id} marcado como PAGO.`);
+            }
+            
+            return reply.status(200).send({ received: true });
+        } catch (err) {
+            console.error("[ERRO WEBHOOK]", err.message);
+            return reply.status(500).send();
+        } finally {
+            if (connection) await connection.close();
+        }
+    }
+
+    // Retornamos 200 para qualquer outro evento para o Asaas não reenviar
+    return reply.status(200).send({ received: true });
 });
 
 start();
