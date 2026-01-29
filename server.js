@@ -285,9 +285,9 @@ fastify.get('/api/user/dashboard-data', { preHandler: [validarToken] }, async (r
 
         // 1. Busca Perfil Detalhado
         const userSql = `SELECT USER_ID, NOME_EXIBICAO, EMAIL_LOGIN, DOCUMENTO_IDENTIDADE, 
-                         ENDERECO_COMPLETO, STATUS_MONITORAMENTO, QTD_DISPOSITIVOS, 
-                         ASAAS_CUSTOMER_ID, ASAAS_SUBSCRIPTION_ID 
-                         FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`;
+                        ENDERECO_COMPLETO, STATUS_MONITORAMENTO, QTD_DISPOSITIVOS, 
+                        ASAAS_CUSTOMER_ID, ASAAS_SUBSCRIPTION_ID, TIPO_SERVICO 
+                        FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`;
         const userRes = await connection.execute(userSql, { email });
         
         if (userRes.rows.length === 0) return reply.status(404).send({ success: false, message: "Perfil não encontrado." });
