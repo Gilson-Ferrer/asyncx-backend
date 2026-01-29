@@ -288,7 +288,11 @@ fastify.get('/api/user/dashboard-data', { preHandler: [validarToken] }, async (r
                         ENDERECO_COMPLETO, STATUS_MONITORAMENTO, QTD_DISPOSITIVOS, 
                         ASAAS_CUSTOMER_ID, ASAAS_SUBSCRIPTION_ID, TIPO_SERVICO 
                         FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`;
-        const userRes = await connection.execute(userSql, { email });
+        const userRes = await connection.execute(
+            userSql, 
+            { email }, 
+            { outFormat: oracledb.OUT_FORMAT_OBJECT } 
+        );
         
         if (userRes.rows.length === 0) return reply.status(404).send({ success: false, message: "Perfil não encontrado." });
         const user = userRes.rows[0];
