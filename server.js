@@ -17,7 +17,7 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 if (!resend) {
     console.warn("[AVISO] RESEND_API_KEY não configurada. O envio de e-mail não funcionará.");
 }
-// TEMPLATE MINIMALISTA (BRANCO E AZUL)
+
 const templateEmail = (nome, link, titulo, corpo, textoBotao) => `
     <div style="background-color: #ffffff; color: #1e293b; padding: 40px; font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; border: 1px solid #e2e8f0; border-radius: 32px; max-width: 500px; margin: auto;">
         <h1 style="color: #2563eb; letter-spacing: 4px; font-weight: 800; margin-bottom: 5px; font-size: 24px;">ASYNCX</h1>
@@ -33,7 +33,7 @@ const templateEmail = (nome, link, titulo, corpo, textoBotao) => `
         <p style="font-size: 10px; color: #94a3b8; line-height: 1.4;">Este link é sensível e expira em 1 hora.<br>Se você não solicitou, por favor ignore este e-mail.</p>
         
         <div style="margin-top: 40px;">
-            <p style="font-size: 9px; color: #cbd5e1; font-weight: bold; letter-spacing: 1px;">© 2026 ASYNCX SECURITY | CYBER INTELLIGENCE</p>
+            <p style="font-size: 9px; color: #cbd5e1; font-weight: bold; letter-spacing: 1px;">© 2026 ASYNCX | SOLUÇÕES EM TI E SEGURANÇA DIGITAL</p>
         </div>
     </div>
 `;
@@ -46,9 +46,9 @@ async function validarToken(request, reply) {
         const authHeader = request.headers.authorization;
         if (!authHeader) throw new Error("Acesso negado.");
         
-        const token = authHeader.split(' ')[1]; // Remove o "Bearer "
+        const token = authHeader.split(' ')[1]; 
         const decoded = jwt.verify(token, JWT_SECRET);
-        request.user = decoded; // Salva os dados do usuário na requisição
+        request.user = decoded; 
     } catch (err) {
         return reply.status(401).send({ success: false, message: "Sessão inválida ou expirada." });
     }
@@ -76,9 +76,7 @@ async function getDbConnection() {
   });
 }
 
-// ==========================================
-// ROTA 1: VALIDAR SETUP (PRIMEIRO ACESSO)
-// ==========================================
+
 fastify.get('/api/auth/setup-check/:token', async (request, reply) => {
     const { token } = request.params;
     let connection;
@@ -97,7 +95,7 @@ fastify.get('/api/auth/setup-check/:token', async (request, reply) => {
         if (agora > expiracao) return reply.status(400).send({ success: false, message: "Link expirado." });
 
         let qrCodeDataURL = null;
-        // Só gera QR Code se for o primeiro vínculo
+
         if (user.MFA_SETUP_COMPLETE === 0) {
             const otpauth_url = speakeasy.otpauthURL({
                 secret: user.MFA_SECRET,
@@ -119,11 +117,9 @@ fastify.get('/api/auth/setup-check/:token', async (request, reply) => {
         if (connection) await connection.close();
     }
 });
-// ==========================================
-// ROTA 2: FINALIZAR CADASTRO (SALVAR SENHA COM HASH)
-// ==========================================
+
 fastify.post('/api/auth/setup-finalize', async (request, reply) => {
-    const { token, senha } = request.body; // Padronizado para seu uso anterior
+    const { token, senha } = request.body; 
     let connection;
     try {
         connection = await getDbConnection();
@@ -134,7 +130,6 @@ fastify.post('/api/auth/setup-finalize', async (request, reply) => {
         
         if (userRes.rows.length === 0) throw new Error("Link inválido.");
         
-        // Validação de tempo no Node.js para evitar erro de timezone do banco
         if (new Date() > new Date(userRes.rows[0].RESET_EXPIRATION)) {
             throw new Error("Link expirou.");
         }
@@ -164,9 +159,6 @@ fastify.post('/api/auth/setup-finalize', async (request, reply) => {
 });
 
 
-// ==========================================
-// ROTA 3: LOGIN DEFINITIVO (COM MFA, BCRYPT E JWT)
-// ==========================================
 fastify.post('/api/login', async (request, reply) => {
     const { email, senha, mfaToken } = request.body;
     let connection;
@@ -174,26 +166,22 @@ fastify.post('/api/login', async (request, reply) => {
     try {
         connection = await getDbConnection();
         
-        // 1. Busca os dados necessários para validação e para o Token
         const sql = `SELECT USER_ID, NOME_EXIBICAO, SENHA_HASH, MFA_SECRET, STATUS_MONITORAMENTO, QTD_DISPOSITIVOS 
                      FROM ASYNCX_USERS 
                      WHERE EMAIL_LOGIN = :email`;
         const result = await connection.execute(sql, { email });
 
-        // Defesa contra enumeração: Erro genérico se não encontrar e-mail
         if (result.rows.length === 0) {
             return reply.status(401).send({ success: false, message: "Credenciais inválidas." });
         }
         
         const user = result.rows[0];
 
-        // 2. Validação da Senha (Bcrypt)
         const senhaValida = await bcrypt.compare(senha, user.SENHA_HASH);
         if (!senhaValida) {
             return reply.status(401).send({ success: false, message: "Credenciais inválidas." });
         }
 
-        // 3. Validação do MFA (Speakeasy)
         const verified = speakeasy.totp.verify({
             secret: user.MFA_SECRET,
             encoding: 'base32',
@@ -205,8 +193,6 @@ fastify.post('/api/login', async (request, reply) => {
             return reply.status(401).send({ success: false, message: "Código MFA inválido." });
         }
 
-        // 4. GERAÇÃO DO TOKEN JWT (O Crachá de Acesso)
-        // Guardamos o e-mail e o ID dentro do token criptografado
         const token = jwt.sign(
             { 
                 userId: user.USER_ID, 
@@ -214,13 +200,12 @@ fastify.post('/api/login', async (request, reply) => {
                 nome: user.NOME_EXIBICAO 
             }, 
             JWT_SECRET, 
-            { expiresIn: '2h' } // Sessão expira automaticamente em 2 horas
+            { expiresIn: '2h' } 
         );
 
-        // 5. Retorno de Sucesso com o Token
         return {
             success: true,
-            token: token, // O frontend DEVE salvar este token
+            token: token, 
             data: {
                 nome: user.NOME_EXIBICAO,
                 status: user.STATUS_MONITORAMENTO,
@@ -237,9 +222,7 @@ fastify.post('/api/login', async (request, reply) => {
     }
 });
 
-// ==========================================
-// ROTA 4: NOTIFICAÇÃO TELEGRAM
-// ==========================================
+
 fastify.post('/api/telegram-notify', async (request, reply) => {
     const { nome, email, mensagem } = request.body;
     const token = process.env.TELEGRAM_TOKEN;
@@ -249,7 +232,7 @@ fastify.post('/api/telegram-notify', async (request, reply) => {
 
     try {
         const telegramUrl = `https://api.telegram.org/bot${token}/sendMessage`;
-        const textoTelegram = `🚀 *NOVO CONTATO ASYNCX*\n\n*Nome:* ${nome}\n*E-mail:* ${email}\n*Mensagem:* ${mensagem}`;
+        const textoTelegram = `*NOVO CONTATO ASYNCX*\n\n*Nome:* ${nome}\n*E-mail:* ${email}\n*Mensagem:* ${mensagem}`;
 
         await fetch(telegramUrl, {
             method: 'POST',
@@ -274,16 +257,15 @@ const start = async () => {
   }
 };
 
-// ROTA PROTEGIDA: Não usa mais :email na URL
+
 fastify.get('/api/user/dashboard-data', { preHandler: [validarToken] }, async (request, reply) => {
-    // O e-mail agora vem do TOKEN decodificado pelo validarToken
+
     const email = request.user.email; 
     let connection;
 
     try {
         connection = await getDbConnection();
 
-        // 1. Busca Perfil Detalhado
         const userSql = `SELECT USER_ID, NOME_EXIBICAO, EMAIL_LOGIN, DOCUMENTO_IDENTIDADE, 
                         ENDERECO_COMPLETO, STATUS_MONITORAMENTO, QTD_DISPOSITIVOS, 
                         ASAAS_CUSTOMER_ID, ASAAS_SUBSCRIPTION_ID, TIPO_SERVICO 
@@ -297,12 +279,11 @@ fastify.get('/api/user/dashboard-data', { preHandler: [validarToken] }, async (r
         if (userRes.rows.length === 0) return reply.status(404).send({ success: false, message: "Perfil não encontrado." });
         const user = userRes.rows[0];
 
-        // 2. Busca Documentos
+
         const docsSql = `SELECT NOME_EXIBICAO, URL_PDF, TIPO_DOC, DATA_UPLOAD 
                          FROM ASYNCX_DOCUMENTS WHERE USER_ID = :id ORDER BY DATA_UPLOAD DESC`;
         const docsRes = await connection.execute(docsSql, { id: user.USER_ID });
 
-        // 3. Busca Financeiro (Atualizada com Descrição e Valor)
         const billsSql = `SELECT ASAAS_PAYMENT_ID, 
                                 VALOR, 
                                 STATUS_PAGO, 
@@ -328,9 +309,7 @@ fastify.get('/api/user/dashboard-data', { preHandler: [validarToken] }, async (r
     }
 });
 
-// ==========================================
-// ROTA: ALTERAR SENHA (PROTEGIDA E COM BCRYPT)
-// ==========================================
+
 
 fastify.post('/api/user/change-password', { preHandler: [validarToken] }, async (request, reply) => {
     // Agora esperamos também o mfaToken do frontend
@@ -345,14 +324,12 @@ fastify.post('/api/user/change-password', { preHandler: [validarToken] }, async 
 
         connection = await getDbConnection();
 
-        // 1. BUSCAR O MFA_SECRET para validar o segundo fator
         const userRes = await connection.execute(
             `SELECT MFA_SECRET FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`,
             { email }
         );
         const user = userRes.rows[0];
 
-        // 2. VALIDAR MFA antes de qualquer alteração
         const verified = speakeasy.totp.verify({
             secret: user.MFA_SECRET,
             encoding: 'base32',
@@ -363,7 +340,6 @@ fastify.post('/api/user/change-password', { preHandler: [validarToken] }, async 
             return reply.status(401).send({ success: false, message: "Código MFA inválido. Operação bloqueada." });
         }
 
-        // 3. SE OK, GERA O HASH E ATUALIZA
         const novaSenhaHasheada = await bcrypt.hash(novaSenha, 10);
         const result = await connection.execute(
             `UPDATE ASYNCX_USERS SET SENHA_HASH = :senha WHERE EMAIL_LOGIN = :email`,
@@ -388,24 +364,19 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
     try {
         connection = await getDbConnection();
         
-        // 1. Busca o usuário
         const res = await connection.execute(
             `SELECT USER_ID, NOME_EXIBICAO FROM ASYNCX_USERS WHERE EMAIL_LOGIN = :email`,
             { email }
         );
 
-        // Defesa contra enumeração: resposta genérica se não existir
         if (res.rows.length === 0) {
             return { success: true, message: "Protocolo iniciado. Verifique seu e-mail se estiver cadastrado." };
         }
 
         const user = res.rows[0];
         const token = crypto.randomBytes(32).toString('hex');
-        
-        // AJUSTE DE EXPIRAÇÃO: 1 hora a partir de agora (independente de timezone)
         const expiration = new Date(Date.now() + 3600 * 1000); 
 
-        // 2. Salva o token no banco
         await connection.execute(
             `UPDATE ASYNCX_USERS 
              SET RESET_TOKEN = :token, RESET_EXPIRATION = :exp 
@@ -414,10 +385,8 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
             { autoCommit: true }
         );
 
-        // 3. RESPOSTA INSTANTÂNEA PARA O SITE (Destrava o botão na hora)
         reply.send({ success: true, message: "Link de segurança enviado!" });
 
-        // 4. ENVIO EM BACKGROUND (Sem 'await' para não segurar a requisição)
         const resetLink = `https://asyncx.com.br/restrito.html?setup=${token}`;
         
         resend.emails.send({
@@ -439,7 +408,7 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
 
     } catch (err) {
         console.error("Erro Crítico no Forgot Password:", err.message);
-        // Se ainda não enviamos o reply.send acima, enviamos o erro
+
         if (!reply.sent) {
             return reply.status(500).send({ success: false, message: "Erro interno no servidor." });
         }
@@ -455,7 +424,7 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
 });
 
 fastify.post('/api/auth/complete-reset', async (request, reply) => {
-    const { token, password } = request.body; // Recebe 'password' do front
+    const { token, password } = request.body; 
     let connection;
     try {
         connection = await getDbConnection();
@@ -476,7 +445,6 @@ fastify.post('/api/auth/complete-reset', async (request, reply) => {
 
         const hash = await bcrypt.hash(password, 10);
 
-        // CORREÇÃO AQUI: Mudamos PASSWORD_HASH para SENHA_HASH conforme seu DESC
         const sql = `UPDATE ASYNCX_USERS 
                      SET SENHA_HASH = :hash, 
                          RESET_TOKEN = NULL, 
@@ -494,21 +462,16 @@ fastify.post('/api/auth/complete-reset', async (request, reply) => {
     }
 });
 
-// ==========================================
-// ROTA: WEBHOOK ASAAS (TOTALMENTE AUTOMATIZADA)
-// ==========================================
+
 fastify.post('/api/webhooks/asaas', async (request, reply) => {
     const { event, payment } = request.body;
     let connection;
 
-    // Log estratégico para auditoria no Render
     console.log(`[WEBHOOK ASAAS] Evento: ${event} | ID: ${payment.id} | Sub: ${payment.subscription || 'N/A'}`);
 
     try {
         connection = await getDbConnection();
 
-        // --- CASO A: NOVA FATURA GERADA (RECORRÊNCIA AUTOMÁTICA) ---
-        // Se o Asaas criou um novo boleto para o mês seguinte de uma assinatura
         if (event === 'PAYMENT_CREATED' && payment.subscription) {
             const sqlInsert = `INSERT INTO ASYNCX_BILLING 
                 (USER_ID, ASAAS_PAYMENT_ID, VALOR, DATA_VENCIMENTO, STATUS_PAGO, LINK_BOLETO, DESCRICAO)
@@ -530,14 +493,11 @@ fastify.post('/api/webhooks/asaas', async (request, reply) => {
             }
         }
 
-        // --- CASO B: PAGAMENTO CONFIRMADO (BAIXA NO FINANCEIRO) ---
         const eventosSucesso = ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH_UNDONE'];
         
         if (eventosSucesso.includes(event)) {
             const payId = payment.id ? payment.id.trim() : null;
             const subId = payment.subscription ? payment.subscription.trim() : null;
-
-            // Tenta atualizar pelo ID do pagamento OU pelo ID da assinatura
             const sqlUpdate = `UPDATE ASYNCX_BILLING 
                                SET STATUS_PAGO = 'PAGO' 
                                WHERE TRIM(ASAAS_PAYMENT_ID) = :id1 
@@ -552,12 +512,10 @@ fastify.post('/api/webhooks/asaas', async (request, reply) => {
             console.log(`[ORACLE] Status PAGO: ${result.rowsAffected} linha(s) atualizada(s).`);
         }
 
-        // Importante: Sempre retornar 200 para o Asaas não penalizar sua URL
         return reply.status(200).send({ success: true });
 
     } catch (err) {
         console.error("[ERRO WEBHOOK]", err.message);
-        // Mesmo com erro, retornamos 200 para o Asaas não travar a fila de envios
         return reply.status(200).send({ error: err.message });
     } finally {
         if (connection) await connection.close();
