@@ -78,8 +78,16 @@ fastify.register(rateLimit, {
 });
 
 fastify.register(cors, { 
-  origin: ["https://gilson-ferrer.github.io", "https://www.asyncx.com.br", "https://asyncx.com.br", "https://api.asyncx.com.br"],
-  methods: ["POST", "GET"]
+  origin: [
+    "https://gilson-ferrer.github.io", 
+    "https://www.asyncx.com.br", 
+    "https://asyncx.com.br", 
+    "https://api.asyncx.com.br",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000"
+  ],
+  methods: ["POST", "GET", "OPTIONS"], 
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-asyncx-admin-token'] 
 });
 
 async function getDbConnection() {
