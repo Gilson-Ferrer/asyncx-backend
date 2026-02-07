@@ -14,6 +14,20 @@ const crypto = require('crypto');
 const { Resend } = require('resend');
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
+const BYPASS_TOKEN = process.env.ADMIN_BYPASS_TOKEN; 
+
+fastify.addHook('preHandler', async (request, reply) => {
+    // Lista de todas as rotas que SÓ o seu Admin Local pode acessar
+    const rotasAdmin = ['/cadastrar', '/api/auth/reenviar-convite', '/api/user/upload-e-vincular']; 
+
+    // Verifica se a rota atual está na lista de rotas do Admin
+    if (rotasAdmin.some(rota => request.url.includes(rota))) {
+        if (request.headers['x-asyncx-admin-token'] !== BYPASS_TOKEN) {
+            return reply.status(403).send({ success: false, message: "Acesso administrativo não autorizado." });
+        }
+    }
+});
+
 if (!resend) {
     console.warn("[AVISO] RESEND_API_KEY não configurada. O envio de e-mail não funcionará.");
 }
@@ -64,7 +78,7 @@ fastify.register(rateLimit, {
 });
 
 fastify.register(cors, { 
-  origin: ["https://gilson-ferrer.github.io", "https://www.asyncx.com.br", "https://asyncx.com.br"],
+  origin: ["https://gilson-ferrer.github.io", "https://www.asyncx.com.br", "https://asyncx.com.br", "https://api.asyncx.com.br"],
   methods: ["POST", "GET"]
 });
 
@@ -387,7 +401,7 @@ fastify.post('/api/auth/forgot-password', async (request, reply) => {
 
         reply.send({ success: true, message: "Link de segurança enviado!" });
 
-        const resetLink = `https://asyncx.com.br/restrito.html?setup=${token}`;
+        const resetLink = `https://www.asyncx.com.br/restrito.html?setup=${token}`;
         
         resend.emails.send({
             from: 'Segurança ASYNCX <contato@asyncx.com.br>',
